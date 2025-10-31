@@ -95,3 +95,5 @@ values.local.yaml
 # Backup files
 *.bak
 *~
+
+.envrc

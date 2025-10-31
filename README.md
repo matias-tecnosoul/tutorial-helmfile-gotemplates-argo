@@ -1,6 +1,3 @@
-README.md
-
-````
 # Tutorial Helmfile + Go Templates + ArgoCD
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -32,12 +29,13 @@ Al completar este tutorial, aprenderás a:
 
 | Herramienta | Versión | Instalación |
 |-------------|---------|-------------|
-| Docker | 24+ | `sudo pacman -S docker` |
-| kubectl | 1.27+ | `sudo pacman -S kubectl` |
-| Helm | 3.12+ | `sudo pacman -S helm` |
-| Helmfile | 0.159+ | [Instrucciones](docs/01-setup.md) |
-| Kind | 0.20+ | [Instrucciones](docs/01-setup.md) |
-| Direnv | 2.32+ | `sudo pacman -S direnv` |
+| Docker 
+| kubectl
+| Helm 
+| Helmfile 
+| Kind
+| Asdf
+| Direnv 
 
 ## 🚀 Quick Start
 

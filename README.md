@@ -123,48 +123,48 @@ tutorial-helmfile-gotemplates-argo/
 
 ### **Guías Paso a Paso**
 
-1. [**Setup del Entorno**](https://claude.ai/chat/docs/01-setup.md) (30 min)
+1. [**Setup del Entorno**] (30 min)
 
    * Instalación de herramientas  
    * Configuración de Kind cluster  
    * Verificación del ambiente  
-2. [**Introducción a Helmfile**](https://claude.ai/chat/docs/02-intro-helmfile.md) (45 min)
+2. [**Introducción a Helmfile**] (45 min)
 
    * Qué es Helmfile y por qué usarlo  
    * Tu primer helmfile.yaml  
    * Deploy de PostgreSQL  
-3. [**Go Templates**](https://claude.ai/chat/docs/03-go-templates.md) (1h)
+3. [**Go Templates**] (1h)
 
    * Variables y acceso a valores  
    * Condicionales (if/else)  
    * Loops (range)  
    * Pipelines y funciones  
    * With para reducir repetición  
-4. [**Multi-Ambiente**](https://claude.ai/chat/docs/04-multi-env.md) (45 min)
+4. [**Multi-Ambiente**] (45 min)
 
    * Estructura de environments/  
    * Herencia de valores (common → dev → secrets)  
    * Gestión de secrets (sin SOPS)  
    * Deploy por ambiente  
-5. [**Helmfile Modular**](https://claude.ai/chat/docs/05-helmfile-modular.md) (45 min)
+5. [**Helmfile Modular**] (45 min)
 
    * Patrón helmfile.d/  
    * Organización por categoría  
    * Deploy selectivo  
    * Best practices de Mikroways  
-6. [**Dependencias**](https://claude.ai/chat/docs/06-dependencies.md) (30 min)
+6. [**Dependencias**] (30 min)
 
    * needs: entre releases  
    * wait y timeout  
    * Orden de ejecución  
    * Dependencias condicionales  
-7. [**Ingress**](https://claude.ai/chat/docs/07-ingress.md) (45-60 min)
+7. [**Ingress**] (45-60 min)
 
    * Nginx Ingress Controller  
    * Ingress resources templating  
    * Hosts dinámicos por ambiente  
    * Testing de endpoints  
-8. [**Integración ArgoCD**](https://claude.ai/chat/docs/08-integracion-argocd.md) (45 min)
+8. [**Integración ArgoCD**] (45 min)
 
    * GitOps workflow  
    * Instalación de ArgoCD  
@@ -392,7 +392,7 @@ Este proyecto está bajo la Licencia MIT \- ver [LICENSE](https://claude.ai/chat
 
 ## **👥 Autores**
 
-* **Claude AI** \- Asistente en la creación del tutoria  
+* **Claude AI** \- 
 * **Matias Morawicki** \- [@matias-tecnosoul](https://github.com/matias-tecnosoul)
 
 ## **🙏 Agradecimientos**
@@ -408,14 +408,5 @@ Este proyecto está bajo la Licencia MIT \- ver [LICENSE](https://claude.ai/chat
 
 * [Tutorial Docker \+ Helm \+ GitLab CI \+ ArgoCD](https://gitlab.com/matias-tecnosoul/tutorial-docker-helm-gitlab-argo)
 
-### **Próximos Tutoriales**
-
-* 🔐 Secrets Management (SOPS \+ Age)  
-* 📊 Observability (Prometheus \+ Grafana \+ Loki)  
-* 🔒 Service Mesh (Istio/Linkerd)
-
----
-
-**⭐ Si este tutorial te resultó útil, considera darle una estrella en GitHub\!**
-
+docuem
 **🚀 Happy Helmfiling\!**

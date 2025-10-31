@@ -242,8 +242,6 @@ argocd app get helmfile-microservices-dev
 argocd app sync helmfile-microservices-dev
 ```
 
-[Ver Makefile completo](https://claude.ai/chat/Makefile) con más comandos.
-
 ## **🔐 Secrets Management**
 
 ⚠️ **IMPORTANTE**: Este tutorial usa secrets en plain text para simplificar el aprendizaje.

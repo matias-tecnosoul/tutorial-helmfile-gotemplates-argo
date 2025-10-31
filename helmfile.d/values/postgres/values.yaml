@@ -1,0 +1,25 @@
+# helmfile.d/values/postgres/values.yaml
+---
+image:
+  repository: postgres
+  tag: "15-alpine"
+
+env:
+  - name: POSTGRES_DB
+    value: appdb
+  - name: POSTGRES_USER
+    value: appuser
+  - name: POSTGRES_PASSWORD
+    value: dev-password-123
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+storage:
+  className: standard
+  requestedSize: 1Gi

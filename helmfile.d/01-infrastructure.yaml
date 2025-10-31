@@ -1,0 +1,28 @@
+---
+# Heredar configuración de ambientes
+environments:
+  dev:
+    kubeContext: kind-helmfile-tutorial
+    values:
+      - values/common.yaml
+
+---
+# Repositorios de Helm
+repositories:
+  - name: groundhog2k
+    url: https://groundhog2k.github.io/helm-charts/
+
+---
+# Releases
+releases:
+  - name: postgres
+    namespace: {{ .Environment.Name }}
+    createNamespace: true
+    chart: groundhog2k/postgres
+    version: ~0.7.0
+    values:
+      - values/postgres/values.yaml
+    labels:
+      tier: infrastructure
+      component: database
+    condition: postgres.enabled

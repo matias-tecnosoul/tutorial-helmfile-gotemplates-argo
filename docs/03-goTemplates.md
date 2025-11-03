@@ -15,9 +15,58 @@ Go Templates es el lenguaje de templating usado por Helm y Helmfile para generar
 {{ range .items }}...{{ end }} # Loop
 ```
 
+## 🔄 Flujo de carga de valores
+
+Antes de profundizar en templates, es importante entender cómo Helmfile carga y mergea valores:
+
+```
+helmfile.d/values/common.yaml (base)
+           ↓
+helmfile.d/environments/dev/values.yaml (overrides)
+           ↓
+helmfile.d/environments/dev/secrets.yaml (secrets)
+           ↓
+    Valores mergeados en .Values
+           ↓
+helmfile.d/values/postgres/values.yaml.gotmpl
+    accede a {{ .Values.* }}
+```
+
+**Ejemplo práctico:**
+
+```yaml
+# 1. common.yaml (base)
+postgres:
+  image:
+    tag: "15-alpine"
+  resources:
+    limits:
+      memory: 512Mi
+
+# 2. environments/dev/values.yaml (override)
+postgres:
+  resources:
+    limits:
+      memory: 256Mi  # ← Sobrescribe
+
+# 3. environments/dev/secrets.yaml
+postgres:
+  password: "dev-password-123"
+
+# 4. Resultado final en .Values.postgres:
+image:
+  tag: "15-alpine"      # De common.yaml
+resources:
+  limits:
+    memory: 256Mi       # De dev/values.yaml (ganó)
+password: "dev-password-123"  # De dev/secrets.yaml
+```
+
+> 💡 **Orden importa**: El último archivo gana en conflictos.
+
 ## 🎨 Variables
 
-### Acceso a valores
+### Acceso a valores desde .Values
 
 ```yaml
 # helmfile.d/values/common.yaml
@@ -27,17 +76,29 @@ postgres:
     tag: "15-alpine"
   port: 5432
 
+# helmfile.d/environments/dev/secrets.yaml
+postgres:
+  password: "dev-password-123"
+
 # helmfile.d/values/postgres/values.yaml.gotmpl
 image:
   repository: {{ .Values.postgres.image.repository }}
-  tag: {{ .Values.postgres.image.tag }}
+  tag: {{ .Values.postgres.image.tag | quote }}
 
 env:
   - name: POSTGRES_PORT
-    value: "{{ .Values.postgres.port }}"
+    value: {{ .Values.postgres.port | quote }}
+  
+  - name: POSTGRES_PASSWORD
+    value: {{ .Values.postgres.password | quote }}  # ← De secrets.yaml
 ```
 
-**Nota:** Renombra `values.yaml` → `values.yaml.gotmpl` para que Helmfile procese templates.
+> 💡 **Nota sobre `.gotmpl`**: 
+> 
+> Solo los archivos en `values/servicio/` que usan templates (`{{ }}`) necesitan `.gotmpl`:
+> - ✅ `values/postgres/values.yaml.gotmpl` - Usa templates
+> - ❌ `values/common.yaml` - Solo valores estáticos (sin .gotmpl)
+> - ❌ `environments/dev/secrets.yaml` - Solo valores estáticos (sin .gotmpl)
 
 ### Variables locales
 
@@ -59,7 +120,7 @@ namespace: {{ $env }}
 {{ .Environment.Name }}        # dev, staging, production
 {{ .Release.Name }}            # Nombre del release
 {{ .Release.Namespace }}       # Namespace del release
-{{ .Values.* }}                # Valores de values.yaml
+{{ .Values.* }}                # Valores mergeados de common + env + secrets
 ```
 
 ## 🔀 Condicionales
@@ -115,8 +176,8 @@ replicaCount: 1
 ```yaml
 {{ if .Values.postgres.persistence.enabled }}
 storage:
-  className: {{ .Values.postgres.storage.className }}
-  requestedSize: {{ .Values.postgres.storage.size }}
+  className: {{ .Values.postgres.persistence.className }}
+  requestedSize: {{ .Values.postgres.persistence.size }}
 {{ end }}
 
 {{ if .Values.postgres.backup.enabled }}
@@ -138,11 +199,11 @@ postgres:
     - analytics
     - logs
 
-# values.yaml.gotmpl
+# values/postgres/values.yaml.gotmpl
 env:
 {{ range .Values.postgres.databases }}
   - name: DB_{{ . | upper }}
-    value: "{{ . }}"
+    value: {{ . | quote }}
 {{ end }}
 ```
 
@@ -327,6 +388,16 @@ postgres:
       memory: 256Mi
 ```
 
+### helmfile.d/environments/dev/secrets.yaml
+
+```yaml
+---
+# Secrets para dev
+
+postgres:
+  password: "dev-password-123"
+```
+
 ### helmfile.d/environments/production/values.yaml
 
 ```yaml
@@ -351,6 +422,16 @@ postgres:
     limits:
       cpu: 2000m
       memory: 4Gi
+```
+
+### helmfile.d/environments/production/secrets.yaml
+
+```yaml
+---
+# Secrets para producción
+
+postgres:
+  password: "STRONG-PROD-PASSWORD-HERE"
 ```
 
 ### helmfile.d/values/postgres/values.yaml.gotmpl
@@ -385,11 +466,15 @@ env:
     value: {{ $db | quote }}
   {{ end }}
   
+  # Password desde secrets
+  - name: POSTGRES_PASSWORD
+    value: {{ .Values.postgres.password | quote }}
+  
   # Hostname según ambiente
   - name: POSTGRES_HOST
     value: postgres-{{ $env }}.{{ $env }}.svc.cluster.local
 
-# Recursos
+# Recursos (mergeados de common + env)
 resources:
   {{ .Values.postgres.resources | toYaml | nindent 2 }}
 
@@ -431,23 +516,33 @@ labels:
 
 ```bash
 # Ver todo el template
-helmfile -e dev template
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev template
 
 # Ver solo postgres
-helmfile -e dev -l name=postgres template
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l name=postgres template
 
 # Ver para producción
-helmfile -e production -l name=postgres template
+helmfile -f helmfile.d/01-infrastructure.yaml -e production -l name=postgres template
+```
+
+### Ver valores mergeados
+
+```bash
+# Ver cómo Helmfile mergea los valores
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values
+
+# Salvar a archivo para inspección
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values > /tmp/values-dev.yaml
 ```
 
 ### Comparar entre ambientes
 
 ```bash
 # Dev
-helmfile -e dev -l name=postgres template > /tmp/postgres-dev.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l name=postgres template > /tmp/postgres-dev.yaml
 
 # Production
-helmfile -e production -l name=postgres template > /tmp/postgres-prod.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e production -l name=postgres template > /tmp/postgres-prod.yaml
 
 # Comparar
 diff /tmp/postgres-dev.yaml /tmp/postgres-prod.yaml
@@ -471,7 +566,7 @@ diff /tmp/postgres-dev.yaml /tmp/postgres-prod.yaml
 ### Debug con --debug
 
 ```bash
-helmfile -e dev --debug template
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev --debug template
 ```
 
 Muestra paso a paso la evaluación de templates.
@@ -495,6 +590,7 @@ Muestra paso a paso la evaluación de templates.
 {{/* Debug: Imprimir valor */}}
 # DEBUG: Environment = {{ .Environment.Name }}
 # DEBUG: IsProd = {{ eq .Environment.Name "production" }}
+# DEBUG: Password length = {{ len .Values.postgres.password }}
 ```
 
 ## ⚠️ Errores Comunes
@@ -543,6 +639,16 @@ port: {{ .Values.port | quote }}  # "5432"
 port: {{ .Values.port }}  # 5432
 ```
 
+### Error 5: Valor no existe en secrets
+
+```yaml
+# ❌ ERROR (si password no está en secrets.yaml)
+value: {{ .Values.postgres.password }}  # Error: nil pointer
+
+# ✅ CORRECTO (con default)
+value: {{ .Values.postgres.password | default "changeme" }}
+```
+
 ## 📚 Funciones Útiles
 
 ```yaml
@@ -577,20 +683,72 @@ port: {{ .Values.port }}  # 5432
 
 # Listas
 {{ list "a" "b" "c" }}           # [a b c]
+{{ index .Values.postgres.databases 0 }}  # Primer elemento
 
 # Default
 {{ .Values.tag | default "latest" }}
+
+# Longitud
+{{ len .Values.postgres.databases }}  # Número de elementos
+```
+
+## 🎓 Ejercicio Práctico
+
+Crea un values file que:
+
+1. Use diferentes réplicas según ambiente (dev=1, staging=2, prod=3)
+2. Cree variables de entorno para cada database en la lista
+3. Solo habilite backups en producción
+4. Use recursos diferentes por ambiente
+
+**Solución:**
+
+```yaml
+# helmfile.d/values/postgres/values.yaml.gotmpl
+{{ $env := .Environment.Name }}
+{{ $isProd := eq $env "production" }}
+{{ $isStaging := eq $env "staging" }}
+
+# 1. Réplicas según ambiente
+{{ if $isProd }}
+replicaCount: 3
+{{ else if $isStaging }}
+replicaCount: 2
+{{ else }}
+replicaCount: 1
+{{ end }}
+
+# 2. Variables de entorno por database
+env:
+{{ range $index, $db := .Values.postgres.databases }}
+  - name: DB_{{ $index }}_NAME
+    value: {{ $db | quote }}
+{{ end }}
+
+# 3. Backups solo en prod
+{{ if $isProd }}
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention: 30
+{{ end }}
+
+# 4. Recursos por ambiente
+resources:
+  {{ .Values.postgres.resources | toYaml | nindent 2 }}
 ```
 
 ## ✅ Checklist
 
-- [ ] Entiendes {{ .Values.* }}, {{ .Environment.Name }}
-- [ ] Usaste if/else para configuración condicional
-- [ ] Implementaste range para generar múltiples items
+- [ ] Entiendes el flujo de carga (common → env → secrets)
+- [ ] Usaste `{{ .Values.* }}` para acceder a valores mergeados
+- [ ] Implementaste if/else para configuración condicional
+- [ ] Usaste range para generar múltiples items
 - [ ] Aplicaste with para reducir repetición
 - [ ] Usaste pipelines (quote, default, toYaml, nindent)
-- [ ] Probaste `helmfile template` en dev y production
-- [ ] Viste diferencias con diff
+- [ ] Probaste `helmfile ... template` en dev y production
+- [ ] Usaste `write-values` para ver el merge de valores
+- [ ] Viste diferencias con diff entre ambientes
 
 ## ➡️ Siguiente Paso
 
@@ -601,7 +759,9 @@ Aprenderás a:
 - Gestionar secrets (sin SOPS)
 - Patterns de herencia de configuración
 - Feature flags por ambiente
+- Deploy selectivo por ambiente
 
 ---
 
-**💡 Tip**: Usa `helmfile template` frecuentemente para verificar que tus templates generan lo que esperas.
+**💡 Tip**: Usa `helmfile ... write-values` para debuggear el merge de valores. 
+Te ayuda a entender qué valor final tiene cada configuración.

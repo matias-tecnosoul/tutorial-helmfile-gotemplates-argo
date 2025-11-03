@@ -1,0 +1,27 @@
+---
+environments:
+  dev:
+    kubeContext: kind-helmfile-tutorial
+    values:
+      - values/common.yaml
+      - environments/dev/values.yaml
+      - environments/dev/secrets.yaml
+
+---
+repositories:
+  - name: groundhog2k
+    url: https://groundhog2k.github.io/helm-charts/
+
+---
+releases:
+  - name: postgres
+    namespace: dev
+    createNamespace: true
+    chart: groundhog2k/postgres
+    version: ~1.5.0
+    values:
+      - values/postgres/values.yaml.gotmpl
+    labels:
+      tier: infrastructure
+      component: database
+    condition: postgres.enabled

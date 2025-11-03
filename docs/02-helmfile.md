@@ -1,8 +1,14 @@
-02 - Introducción a Helmfile (45 min)
-🎯 Objetivo
+# 02 - Introducción a Helmfile (45 min)
+
+## 🎯 Objetivo
+
 Entender qué es Helmfile, por qué usarlo, y desplegar tu primer release (PostgreSQL) de forma declarativa.
-📝 El Problema
+
+## 📝 El Problema
+
 Imagina gestionar 10+ aplicaciones en Kubernetes:
+
+```bash
 # Helm manual (repetitivo y propenso a errores)
 helm install postgres bitnami/postgresql -n dev -f values-dev.yaml
 helm install redis bitnami/redis -n dev -f values-dev.yaml
@@ -14,15 +20,22 @@ helm install user-service ./charts/user -n dev -f values-dev.yaml
 # Ahora actualiza todos
 # Ahora maneja dependencias
 # Ahora... 🤯
-Problemas:
-Comandos largos y repetitivos
-Difícil mantener consistencia entre ambientes
-No hay control de dependencias
-No hay state/versión de tu infraestructura
-Scripts bash frágiles
-💡 La Solución: Helmfile
-Helmfile = Docker Compose para Helm
+```
+
+**Problemas:**
+- Comandos largos y repetitivos
+- Difícil mantener consistencia entre ambientes
+- No hay control de dependencias
+- No hay state/versión de tu infraestructura
+- Scripts bash frágiles
+
+## 💡 La Solución: Helmfile
+
+**Helmfile = Docker Compose para Helm**
+
 Un archivo declarativo que define TODOS tus releases:
+
+```yaml
 # helmfile.yaml
 releases:
   - name: postgres
@@ -36,16 +49,28 @@ releases:
     namespace: dev
     values:
       - values/redis.yaml
+```
+
 Un comando para gobernarlos a todos:
+```bash
 helmfile apply  # Instala/actualiza TODO
-🏗️ Tu Primer Helmfile
-Paso 1: Estructura básica
+```
+
+## 🏗️ Tu Primer Helmfile
+
+### Paso 1: Estructura básica
+
+```bash
 cd ~/tutorial-helmfile-gotemplates-argo
 
 # Crear estructura inicial
 mkdir -p helmfile.d/{values,environments}
 mkdir -p helmfile.d/values/postgres
-Paso 2: helmfile.yaml (raíz)
+```
+
+### Paso 2: helmfile.yaml (raíz)
+
+```yaml
 # helmfile.yaml
 ---
 # Definir ambientes
@@ -59,7 +84,11 @@ environments:
 # Orquestador simple (por ahora)
 helmfiles:
   - path: helmfile.d/01-infrastructure.yaml
-Paso 3: Values comunes
+```
+
+### Paso 3: Values comunes
+
+```yaml
 # helmfile.d/values/common.yaml
 ---
 # Valores base compartidos
@@ -78,7 +107,11 @@ postgres:
       memory: 512Mi
   storage:
     size: 1Gi
-Paso 4: Helmfile de infraestructura
+```
+
+### Paso 4: Helmfile de infraestructura
+
+```yaml
 # helmfile.d/01-infrastructure.yaml
 ---
 # Heredar configuración de ambientes
@@ -108,8 +141,13 @@ releases:
       tier: infrastructure
       component: database
     condition: postgres.enabled
-Nota: {{ .Environment.Name }} es Go Template (lo veremos en cap 03).
-Paso 5: Values específicos de PostgreSQL
+```
+
+**Nota:** `{{ .Environment.Name }}` es Go Template (lo veremos en cap 03).
+
+### Paso 5: Values específicos de PostgreSQL
+
+```yaml
 # helmfile.d/values/postgres/values.yaml
 ---
 image:
@@ -135,18 +173,38 @@ resources:
 storage:
   className: standard
   requestedSize: 1Gi
-🧪 Desplegar con Helmfile
-Listar releases (sin instalar)
+```
+
+## 🧪 Desplegar con Helmfile
+
+### Listar releases (sin instalar)
+
+```bash
 helmfile -e dev list
-Salida:
+```
+
+**Salida:**
+```
 NAME     NAMESPACE  ENABLED  LABELS                              CHART                       VERSION
 postgres dev        true     component:database,tier:infrastructure  groundhog2k/postgres  ~0.7.0
-Ver qué se instalará (dry-run)
+```
+
+### Ver qué se instalará (dry-run)
+
+```bash
 helmfile -e dev diff
-Primera vez: Mostrará que todo es nuevo.
-Instalar
+```
+
+**Primera vez:** Mostrará que todo es nuevo.
+
+### Instalar
+
+```bash
 helmfile -e dev apply
-Salida:
+```
+
+**Salida:**
+```
 Adding repo groundhog2k https://groundhog2k.github.io/helm-charts/
 "groundhog2k" has been added to your repositories
 
@@ -159,7 +217,11 @@ Release "postgres" does not exist. Installing it now.
 NAME: postgres
 ...
 STATUS: deployed
-Verificar
+```
+
+### Verificar
+
+```bash
 # Ver releases con Helm
 helm list -n dev
 
@@ -168,7 +230,10 @@ kubectl get all -n dev
 
 # Ver logs del pod
 kubectl logs -n dev -l app.kubernetes.io/name=postgres
-Salida esperada:
+```
+
+**Salida esperada:**
+```
 NAME                             READY   STATUS    RESTARTS   AGE
 pod/postgres-0                   1/1     Running   0          30s
 
@@ -177,7 +242,11 @@ service/postgres   ClusterIP   10.96.100.123   <none>        5432/TCP   30s
 
 NAME                        READY   AGE
 statefulset.apps/postgres   1/1     30s
-Conectarse a PostgreSQL
+```
+
+### Conectarse a PostgreSQL
+
+```bash
 # Port-forward
 kubectl port-forward -n dev svc/postgres 5432:5432 &
 
@@ -187,17 +256,30 @@ PGPASSWORD=dev-password-123 psql -h localhost -U appuser -d appdb
 # O desde un pod temporal
 kubectl run -it --rm psql --image=postgres:15-alpine --restart=Never -- \
   psql -h postgres.dev.svc.cluster.local -U appuser -d appdb
-🔄 Actualizar un Release
-Cambiar configuración
-Edita helmfile.d/values/postgres/values.yaml:
+```
+
+## 🔄 Actualizar un Release
+
+### Cambiar configuración
+
+Edita `helmfile.d/values/postgres/values.yaml`:
+
+```yaml
 # Cambiar límite de memoria
 resources:
   limits:
     cpu: 500m
     memory: 1Gi  # ← Cambio: de 512Mi a 1Gi
-Ver diferencias
+```
+
+### Ver diferencias
+
+```bash
 helmfile -e dev diff
-Salida:
+```
+
+**Salida:**
+```diff
 postgres, Deployment (apps) has changed:
   spec:
     template:
@@ -207,42 +289,41 @@ postgres, Deployment (apps) has changed:
             limits:
 -             memory: 512Mi
 +             memory: 1Gi
-Aplicar cambios
+```
+
+### Aplicar cambios
+
+```bash
 helmfile -e dev apply
+```
+
 Helmfile detecta el cambio y hace upgrade automáticamente.
-🗑️ Eliminar un Release
+
+## 🗑️ Eliminar un Release
+
+```bash
 # Eliminar todo
 helmfile -e dev destroy
 
 # Confirmar
 kubectl get all -n dev  # No debería haber nada
-📊 Comparación: Helm vs Helmfile
-Aspecto
-Helm Manual
-Helmfile
-Instalar
-helm install postgres groundhog2k/postgres -n dev -f values.yaml
-helmfile apply
-Actualizar
-helm upgrade postgres groundhog2k/postgres -n dev -f values.yaml
-helmfile apply
-Ver cambios
-helm diff upgrade postgres ... (requiere plugin)
-helmfile diff
-Múltiples apps
-Script bash con loops
-Declarativo en YAML
-Ambientes
-Archivos values separados + scripts
-helmfile -e prod apply
-Dependencias
-Manual o Helm hooks
-needs: built-in
-State
-Solo en cluster
-Archivo versionable en Git
+```
 
-🎯 Comandos Clave de Helmfile
+## 📊 Comparación: Helm vs Helmfile
+
+| Aspecto | Helm Manual | Helmfile |
+|---------|-------------|----------|
+| **Instalar** | `helm install postgres groundhog2k/postgres -n dev -f values.yaml` | `helmfile apply` |
+| **Actualizar** | `helm upgrade postgres groundhog2k/postgres -n dev -f values.yaml` | `helmfile apply` |
+| **Ver cambios** | `helm diff upgrade postgres ...` (requiere plugin) | `helmfile diff` |
+| **Múltiples apps** | Script bash con loops | Declarativo en YAML |
+| **Ambientes** | Archivos values separados + scripts | `helmfile -e prod apply` |
+| **Dependencias** | Manual o Helm hooks | `needs:` built-in |
+| **State** | Solo en cluster | Archivo versionable en Git |
+
+## 🎯 Comandos Clave de Helmfile
+
+```bash
 # Listar releases
 helmfile list
 helmfile -e dev list
@@ -271,7 +352,11 @@ helmfile -e dev -l name=postgres apply
 
 # Aplicar por labels
 helmfile -e dev -l tier=infrastructure apply
-🔍 Estructura del helmfile.yaml
+```
+
+## 🔍 Estructura del helmfile.yaml
+
+```yaml
 # 1. Ambientes (opcional)
 environments:
   dev:
@@ -296,13 +381,30 @@ releases:
     needs: [other-release]    # Opcional
     labels:                   # Opcional
       key: value
-✅ Checklist
-Antes de continuar:
-[ ] Entiendes qué problema resuelve Helmfile
-[ ] Creaste helmfile.yaml y helmfile.d/01-infrastructure.yaml
-[ ] Desplegaste PostgreSQL con helmfile apply
-[ ] Verificaste con kubectl get all -n dev
-[ ] Probaste helmfile diff y viste cambios
-[ ] Ejecutaste helmfile list exitosamente
+```
 
-💡 Tip: Ejecuta el comando helmfile diff antes de apply.
+## ✅ Checklist
+
+Antes de continuar:
+
+- [ ] Entiendes qué problema resuelve Helmfile
+- [ ] Creaste helmfile.yaml y helmfile.d/01-infrastructure.yaml
+- [ ] Desplegaste PostgreSQL con `helmfile apply`
+- [ ] Verificaste con `kubectl get all -n dev`
+- [ ] Probaste `helmfile diff` y viste cambios
+- [ ] Ejecutaste `helmfile list` exitosamente
+
+## ➡️ Siguiente Paso
+
+👉 **[03 - Go Templates](03-go-templates.md)**
+
+En el próximo capítulo profundizaremos en:
+- Variables y asignación
+- Condicionales (if/else)
+- Loops (range)
+- Pipelines y funciones
+- Templating de values dinámicos
+
+---
+
+**💡 Tip**: Guarda el comando `helmfile diff` antes de `apply`. Es tu mejor amigo para evitar sorpresas.

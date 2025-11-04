@@ -30,6 +30,12 @@ helmfile.d/environments/dev/secrets.yaml (secrets)
 helmfile.d/values/postgres/values.yaml.gotmpl
     accede a {{ .Values.* }}
 ```
+> 💡 **Nota sobre `.gotmpl`**: 
+> 
+> Solo los archivos en `values/servicio/` que usan templates (`{{ }}`) necesitan `.gotmpl`:
+> - ✅ `values/postgres/values.yaml.gotmpl` - Usa templates
+> - ❌ `values/common.yaml` - Solo valores estáticos (sin .gotmpl)
+> - ❌ `environments/dev/secrets.yaml` - Solo valores estáticos (sin .gotmpl)
 
 **Ejemplo práctico:**
 ```yaml
@@ -89,13 +95,6 @@ env:
   - name: POSTGRES_PASSWORD
     value: {{ .Values.postgres.password | quote }}  # ← De secrets.yaml
 ```
-
-> 💡 **Nota sobre `.gotmpl`**: 
-> 
-> Solo los archivos en `values/servicio/` que usan templates (`{{ }}`) necesitan `.gotmpl`:
-> - ✅ `values/postgres/values.yaml.gotmpl` - Usa templates
-> - ❌ `values/common.yaml` - Solo valores estáticos (sin .gotmpl)
-> - ❌ `environments/dev/secrets.yaml` - Solo valores estáticos (sin .gotmpl)
 
 ### Variables locales
 ```yaml

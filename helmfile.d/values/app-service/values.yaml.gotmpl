@@ -1,0 +1,53 @@
+---
+{{ $env := .Environment.Name }}
+
+replicaCount: {{ .Values.appService.replicaCount }}
+
+image:
+  repository: {{ .Values.appService.image.repository }}
+  tag: {{ .Values.appService.image.tag }}
+  pullPolicy: {{ if eq $env "production" }}IfNotPresent{{ else }}Always{{ end }}
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+env:
+  - name: NODE_ENV
+    value: {{ $env }}
+  
+  - name: PORT
+    value: "3000"
+  
+  - name: DB_HOST
+    value: postgres.dev.svc.cluster.local
+  
+  - name: DB_NAME
+    value: "appdb"
+  
+  - name: DB_USER
+    value: "appuser"
+  
+  - name: DB_PASSWORD
+    value: {{ .Values.postgres.password | quote }}
+
+resources:
+  {{ .Values.appService.resources | toYaml | nindent 2 }}
+
+{{ if .Values.appService.ingress.enabled }}
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: app.{{ .Values.baseDomain }}
+      paths:
+        - path: /
+          pathType: Prefix
+  {{ if eq $env "production" }}
+  tls:
+    - secretName: app-service-tls
+      hosts:
+        - app.{{ .Values.baseDomain }}
+  {{ end }}
+{{ end }}

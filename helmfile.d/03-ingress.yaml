@@ -1,3 +1,5 @@
+# ⚠️ OPCIONAL: Este módulo es opcional. Ver docs/07-ingress.md
+# Para testing rápido, usa: kubectl port-forward -n dev svc/app-service 3000:80
 ---
 environments:
   dev:
@@ -34,6 +36,4 @@ releases:
       component: ingress
     condition: ingressNginx.enabled
     needs:
-      - dev/auth-service
-      - dev/user-service
-      - dev/api-gateway
+      - dev/app-service

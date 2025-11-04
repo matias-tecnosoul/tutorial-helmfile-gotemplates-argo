@@ -18,39 +18,16 @@ environments:
 
 ---
 releases:
-  - name: auth-service
+  - name: app-service
     namespace: dev
-    chart: ../charts/auth-service
+    chart: ../charts/app-service
     values:
-      - values/auth-service/values.yaml.gotmpl
+      - values/app-service/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     needs:
       - dev/postgres
     labels:
       tier: services
-      component: auth
-    condition: services.authService.enabled
-  
-  - name: user-service
-    namespace: dev
-    chart: ../charts/user-service
-    values:
-      - values/user-service/values.yaml.gotmpl
-    needs:
-      - dev/postgres
-    labels:
-      tier: services
-      component: users
-    condition: services.userService.enabled
-  
-  - name: api-gateway
-    namespace: dev
-    chart: ../charts/api-gateway
-    values:
-      - values/api-gateway/values.yaml.gotmpl
-    needs:
-      - dev/auth-service
-      - dev/user-service
-    labels:
-      tier: services
-      component: gateway
-    condition: services.apiGateway.enabled
+      component: app
+    condition: appService.enabled

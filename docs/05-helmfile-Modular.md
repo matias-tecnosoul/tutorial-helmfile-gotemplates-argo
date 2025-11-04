@@ -2,21 +2,17 @@
 
 ## 🎯 Objetivo
 
-Refactorizar el helmfile monolítico en módulos organizados por categoría, facilitando el mantenimiento y deploy selectivo.
+Entender la organización modular con `helmfile.d/`, facilitando el mantenimiento y deploy selectivo por categoría.
 
 ## 📝 ¿Por Qué Modular?
 
 ### Problema: Helmfile Monolítico
-
 ```yaml
-# helmfile.yaml - 500+ líneas
+# helmfile.yaml - 200+ líneas
 releases:
   - name: postgres      # Líneas 1-30
-  - name: redis         # Líneas 31-60
-  - name: auth-service  # Líneas 61-100
-  - name: user-service  # Líneas 101-140
-  - name: api-gateway   # Líneas 141-180
-  - name: ingress-nginx # Líneas 181-220
+  - name: app-service   # Líneas 31-60
+  - name: ingress-nginx # Líneas 61-90
   # ... más releases
 ```
 
@@ -27,23 +23,26 @@ releases:
 - Mezcla concerns (DB, apps, networking)
 
 ### Solución: helmfile.d/
-
 ```
 helmfile.d/
-├── 01-infrastructure.yaml  # PostgreSQL, Redis
-├── 02-services.yaml        # Microservices
-└── 03-ingress.yaml         # Networking
+├── 01-infrastructure.yaml  # PostgreSQL
+├── 02-services.yaml        # app-service
+└── 03-ingress.yaml         # Networking (OPCIONAL)
 ```
 
-## 🏗️ Estructura Modular Completa
+**Ventajas:**
+- Separación de responsabilidades
+- Deploy selectivo: `helmfile -f helmfile.d/01-infrastructure.yaml apply`
+- Menos conflictos en Git
+- Fácil onboarding
 
+## 🏗️ Estructura Modular Completa
 ```bash
-helmfile-microservices/
-├── helmfile.yaml                    # Orquestador
+tutorial-helmfile-gotemplates-argo/
 ├── helmfile.d/
 │   ├── 01-infrastructure.yaml       # Bases de datos
-│   ├── 02-services.yaml             # Apps del negocio
-│   ├── 03-ingress.yaml              # Networking
+│   ├── 02-services.yaml             # Aplicaciones
+│   ├── 03-ingress.yaml              # Networking (OPCIONAL)
 │   ├── environments/                # Por ambiente
 │   │   ├── dev/
 │   │   │   ├── values.yaml
@@ -55,77 +54,42 @@ helmfile-microservices/
 │       ├── common.yaml
 │       ├── postgres/
 │       │   └── values.yaml.gotmpl
-│       ├── redis/
+│       ├── app-service/
 │       │   └── values.yaml.gotmpl
-│       ├── auth-service/
-│       │   └── values.yaml.gotmpl
-│       ├── user-service/
-│       │   └── values.yaml.gotmpl
-│       └── api-gateway/
+│       └── nginx-ingress/           # OPCIONAL
 │           └── values.yaml.gotmpl
 └── charts/                          # Charts custom
-    ├── auth-service/
-    ├── user-service/
-    └── api-gateway/
+    └── app-service/
+        ├── Chart.yaml
+        ├── values.yaml
+        └── templates/
 ```
 
-## 📄 Helmfile Principal (Orquestador)
-
-### helmfile.yaml
-
-```yaml
-# helmfile.yaml
----
-# Definir ambientes UNA VEZ
-environments:
-  dev:
-    kubeContext: kind-helmfile-tutorial
-    values:
-      - helmfile.d/values/common.yaml
-      - helmfile.d/environments/dev/values.yaml
-      - helmfile.d/environments/dev/secrets.yaml
-  
-  staging:
-    kubeContext: kind-helmfile-tutorial
-    values:
-      - helmfile.d/values/common.yaml
-      - helmfile.d/environments/staging/values.yaml
-      - helmfile.d/environments/staging/secrets.yaml
-  
-  production:
-    kubeContext: kind-helmfile-tutorial
-    values:
-      - helmfile.d/values/common.yaml
-      - helmfile.d/environments/production/values.yaml
-      - helmfile.d/environments/production/secrets.yaml
-
----
-# Incluir helmfiles modulares EN ORDEN
-helmfiles:
-  - path: helmfile.d/01-infrastructure.yaml
-  - path: helmfile.d/02-services.yaml
-  - path: helmfile.d/03-ingress.yaml
-```
+> 💡 **Patrón Mikroways**: 
+> Este tutorial NO usa `helmfile.yaml` en la raíz. 
+> Cada módulo se ejecuta independientemente, permitiendo deploy selectivo.
 
 ## 🗄️ Módulo 1: Infraestructura
 
 ### helmfile.d/01-infrastructure.yaml
-
 ```yaml
 ---
 # Heredar configuración de ambientes
 environments:
   dev:
+    kubeContext: kind-helmfile-tutorial
     values:
       - values/common.yaml
       - environments/dev/values.yaml
       - environments/dev/secrets.yaml
   staging:
+    kubeContext: kind-helmfile-tutorial
     values:
       - values/common.yaml
       - environments/staging/values.yaml
       - environments/staging/secrets.yaml
   production:
+    kubeContext: kind-helmfile-tutorial
     values:
       - values/common.yaml
       - environments/production/values.yaml
@@ -139,142 +103,25 @@ repositories:
 ---
 releases:
   - name: postgres
-    namespace: {{ .Environment.Name }}
+    namespace: dev
     createNamespace: true
     chart: groundhog2k/postgres
-    version: ~0.7.0
+    version: ~1.5.0
     values:
       - values/postgres/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     labels:
       tier: infrastructure
       component: database
     condition: postgres.enabled
-  
-  - name: redis
-    namespace: {{ .Environment.Name }}
-    createNamespace: true
-    chart: groundhog2k/redis
-    version: ~0.7.0
-    values:
-      - values/redis/values.yaml.gotmpl
-    labels:
-      tier: infrastructure
-      component: cache
-    condition: redis.enabled
 ```
+
+**Responsabilidad:** Base de datos y servicios de infraestructura base.
 
 ## 🎯 Módulo 2: Services
 
-### Crear charts custom
-
-```bash
-# Crear estructura de charts
-mkdir -p charts/{auth-service,user-service,api-gateway}
-
-# Auth Service
-cat > charts/auth-service/Chart.yaml << 'EOF'
-apiVersion: v2
-name: auth-service
-description: Authentication Service
-type: application
-version: 0.1.0
-appVersion: "1.0.0"
-EOF
-
-# User Service
-cat > charts/user-service/Chart.yaml << 'EOF'
-apiVersion: v2
-name: user-service
-description: User Management Service
-type: application
-version: 0.1.0
-appVersion: "1.0.0"
-EOF
-
-# API Gateway
-cat > charts/api-gateway/Chart.yaml << 'EOF'
-apiVersion: v2
-name: api-gateway
-description: API Gateway
-type: application
-version: 0.1.0
-appVersion: "1.0.0"
-EOF
-```
-
-### Charts templates (simplificados)
-
-```yaml
-# charts/auth-service/templates/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ .Release.Name }}
-spec:
-  replicas: {{ .Values.replicaCount }}
-  selector:
-    matchLabels:
-      app: {{ .Release.Name }}
-  template:
-    metadata:
-      labels:
-        app: {{ .Release.Name }}
-    spec:
-      containers:
-      - name: {{ .Chart.Name }}
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-        ports:
-        - containerPort: {{ .Values.service.port }}
-        env:
-        {{- range .Values.env }}
-        - name: {{ .name }}
-          value: {{ .value | quote }}
-        {{- end }}
-        resources:
-          {{- toYaml .Values.resources | nindent 10 }}
-```
-
-```yaml
-# charts/auth-service/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ .Release.Name }}
-spec:
-  type: ClusterIP
-  ports:
-  - port: 80
-    targetPort: {{ .Values.service.port }}
-  selector:
-    app: {{ .Release.Name }}
-```
-
-```yaml
-# charts/auth-service/values.yaml (defaults)
-replicaCount: 1
-
-image:
-  repository: nginx
-  tag: alpine
-
-service:
-  port: 3000
-
-env: []
-
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
-```
-
-**Nota:** Replica la misma estructura para `user-service` y `api-gateway`.
-
 ### helmfile.d/02-services.yaml
-
 ```yaml
 ---
 environments:
@@ -296,131 +143,31 @@ environments:
 
 ---
 releases:
-  - name: auth-service
-    namespace: {{ .Environment.Name }}
-    chart: ../charts/auth-service
+  - name: app-service
+    namespace: dev
+    chart: ../charts/app-service
     values:
-      - values/auth-service/values.yaml.gotmpl
+      - values/app-service/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     needs:
-      - {{ .Environment.Name }}/postgres
-      - {{ .Environment.Name }}/redis
+      - dev/postgres
     labels:
       tier: services
-      component: auth
-    condition: services.authService.enabled
-  
-  - name: user-service
-    namespace: {{ .Environment.Name }}
-    chart: ../charts/user-service
-    values:
-      - values/user-service/values.yaml.gotmpl
-    needs:
-      - {{ .Environment.Name }}/postgres
-      - {{ .Environment.Name }}/redis
-    labels:
-      tier: services
-      component: users
-    condition: services.userService.enabled
-  
-  - name: api-gateway
-    namespace: {{ .Environment.Name }}
-    chart: ../charts/api-gateway
-    values:
-      - values/api-gateway/values.yaml.gotmpl
-    needs:
-      - {{ .Environment.Name }}/auth-service
-      - {{ .Environment.Name }}/user-service
-    labels:
-      tier: services
-      component: gateway
-    condition: services.apiGateway.enabled
+      component: app
+    condition: appService.enabled
 ```
 
-### helmfile.d/values/common.yaml (actualizado)
+**Responsabilidad:** Aplicaciones del negocio que dependen de infraestructura.
 
-```yaml
----
-# Services configuration
-services:
-  authService:
-    enabled: true
-    image:
-      repository: nginx  # Placeholder
-      tag: alpine
-    replicaCount: 1
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-  
-  userService:
-    enabled: true
-    image:
-      repository: nginx
-      tag: alpine
-    replicaCount: 1
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-  
-  apiGateway:
-    enabled: true
-    image:
-      repository: nginx
-      tag: alpine
-    replicaCount: 1
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-```
+**Nota sobre `needs:`** - Esto lo veremos en detalle en el capítulo 06.
 
-### helmfile.d/values/auth-service/values.yaml.gotmpl
-
-```yaml
----
-{{ $env := .Environment.Name }}
-
-replicaCount: {{ .Values.services.authService.replicaCount }}
-
-image:
-  repository: {{ .Values.services.authService.image.repository }}
-  tag: {{ .Values.services.authService.image.tag }}
-
-service:
-  port: 3000
-
-env:
-  - name: NODE_ENV
-    value: {{ $env }}
-  - name: DATABASE_HOST
-    value: postgres.{{ $env }}.svc.cluster.local
-  - name: REDIS_HOST
-    value: redis.{{ $env }}.svc.cluster.local
-  - name: SERVICE_NAME
-    value: auth-service
-
-resources:
-  {{ .Values.services.authService.resources | toYaml | nindent 2 }}
-```
-
-**Replica para `user-service` y `api-gateway` con valores correspondientes.**
-
-## 🌐 Módulo 3: Ingress
+## 🌐 Módulo 3: Ingress (OPCIONAL)
 
 ### helmfile.d/03-ingress.yaml
-
 ```yaml
+# ⚠️ OPCIONAL: Este módulo es opcional. Ver docs/07-ingress.md
+# Para testing rápido, usa: kubectl port-forward -n dev svc/app-service 3000:80
 ---
 environments:
   dev:
@@ -450,147 +197,171 @@ releases:
     version: ~4.11.0
     values:
       - values/nginx-ingress/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     labels:
       tier: networking
       component: ingress
     condition: ingressNginx.enabled
     needs:
-      - {{ .Environment.Name }}/auth-service
-      - {{ .Environment.Name }}/user-service
-      - {{ .Environment.Name }}/api-gateway
+      - dev/app-service
 ```
 
-### helmfile.d/values/common.yaml (agregar)
-
-```yaml
-# Ingress
-ingressNginx:
-  enabled: true
-```
-
-### helmfile.d/values/nginx-ingress/values.yaml.gotmpl
-
-```yaml
----
-controller:
-  replicaCount: 1
-  
-  service:
-    type: NodePort
-    nodePorts:
-      http: 30080
-      https: 30443
-  
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-```
+**Responsabilidad:** Exponer aplicaciones al exterior (opcional).
 
 ## 🎮 Comandos Modulares
 
 ### Listar por módulo
-
 ```bash
 # Toda la infraestructura
-helmfile -e dev -f helmfile.d/01-infrastructure.yaml list
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev list
 
 # Todos los servicios
-helmfile -e dev -f helmfile.d/02-services.yaml list
+helmfile -f helmfile.d/02-services.yaml -e dev list
 
-# Solo ingress
-helmfile -e dev -f helmfile.d/03-ingress.yaml list
+# Solo ingress (opcional)
+helmfile -f helmfile.d/03-ingress.yaml -e dev list
+```
+
+**Salida esperada:**
+```
+# 01-infrastructure.yaml
+NAME     NAMESPACE  ENABLED  LABELS                                  CHART
+postgres dev        true     component:database,tier:infrastructure  groundhog2k/postgres
+
+# 02-services.yaml
+NAME         NAMESPACE  ENABLED  LABELS                      CHART
+app-service  dev        true     component:app,tier:services ../charts/app-service
 ```
 
 ### Deploy selectivo
-
 ```bash
 # Solo infraestructura
-helmfile -e dev -f helmfile.d/01-infrastructure.yaml apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 
-# Solo servicios (requiere infraestructura)
-helmfile -e dev -f helmfile.d/02-services.yaml apply
+# Solo servicios (requiere infraestructura ya desplegada)
+helmfile -f helmfile.d/02-services.yaml -e dev apply
 
-# Solo ingress
-helmfile -e dev -f helmfile.d/03-ingress.yaml apply
+# Solo ingress (opcional)
+helmfile -f helmfile.d/03-ingress.yaml -e dev apply
 ```
 
 ### Deploy por labels
-
 ```bash
 # Solo databases
-helmfile -e dev -l component=database apply
-
-# Solo cache
-helmfile -e dev -l component=cache apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l component=database apply
 
 # Toda la infraestructura
-helmfile -e dev -l tier=infrastructure apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l tier=infrastructure apply
 
 # Todos los servicios
-helmfile -e dev -l tier=services apply
-```
+helmfile -f helmfile.d/02-services.yaml -e dev -l tier=services apply
 
-### Deploy completo
-
-```bash
-# Todo en orden (respeta helmfiles: order)
-helmfile -e dev apply
+# Solo app
+helmfile -f helmfile.d/02-services.yaml -e dev -l component=app apply
 ```
 
 ## 📊 Flujo de Deploy
-
 ```
-helmfile apply
+Opción 1: Deploy módulo por módulo
     ↓
-helmfile.d/01-infrastructure.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
     ↓
   postgres (deployed)
     ↓
-  redis (deployed)
+helmfile -f helmfile.d/02-services.yaml -e dev apply
     ↓
-helmfile.d/02-services.yaml
+  app-service (deployed, needs: postgres)
     ↓
-  auth-service (needs: postgres, redis)
+helmfile -f helmfile.d/03-ingress.yaml -e dev apply (OPCIONAL)
     ↓
-  user-service (needs: postgres, redis)
-    ↓
-  api-gateway (needs: auth-service, user-service)
-    ↓
-helmfile.d/03-ingress.yaml
-    ↓
-  ingress-nginx (needs: all services)
+  ingress-nginx (deployed, needs: app-service)
 ```
 
 ## 🧪 Verificar Deploy Modular
 
+### 1. Infraestructura
 ```bash
-# 1. Infraestructura
-helmfile -e dev -f helmfile.d/01-infrastructure.yaml apply
+# Deploy
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 
-kubectl get pods -n dev
-# Debe mostrar: postgres-0, redis-xxx
+# Verificar
+kubectl get all -n dev
+```
 
-# 2. Services
-helmfile -e dev -f helmfile.d/02-services.yaml apply
+**Salida esperada:**
+```
+NAME             READY   STATUS    RESTARTS   AGE
+pod/postgres-0   1/1     Running   0          1m
 
-kubectl get pods -n dev
-# Debe mostrar: auth-service-xxx, user-service-xxx, api-gateway-xxx
+NAME               TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+service/postgres   ClusterIP   10.96.100.50   <none>        5432/TCP   1m
 
-# 3. Ingress
-helmfile -e dev -f helmfile.d/03-ingress.yaml apply
+NAME                        READY   AGE
+statefulset.apps/postgres   1/1     1m
+```
 
-kubectl get pods -n ingress-nginx
-# Debe mostrar: ingress-nginx-controller-xxx
+### 2. Services
+```bash
+# Deploy
+helmfile -f helmfile.d/02-services.yaml -e dev apply
+
+# Verificar
+kubectl get all -n dev
+```
+
+**Salida esperada:**
+```
+NAME                               READY   STATUS    RESTARTS   AGE
+pod/postgres-0                     1/1     Running   0          2m
+pod/app-service-xxxxxxxxxx-xxxxx   1/1     Running   0          30s
+
+NAME                  TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/postgres      ClusterIP   10.96.100.50    <none>        5432/TCP   2m
+service/app-service   ClusterIP   10.96.200.100   <none>        80/TCP     30s
+
+NAME                          READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/app-service   1/1     1            1           30s
+
+NAME                        READY   AGE
+statefulset.apps/postgres   1/1     2m
+```
+
+### 3. Probar la aplicación
+```bash
+# Port-forward
+kubectl port-forward -n dev svc/app-service 3000:80
+
+# En otra terminal
+curl http://localhost:3000/health
+curl http://localhost:3000/api/tasks
+```
+
+**Salida esperada:**
+```json
+{
+  "status": "healthy",
+  "db": "connected",
+  "version": "1.0.0"
+}
+
+[
+  {
+    "id": 1,
+    "title": "Setup Kubernetes cluster",
+    "completed": true
+  },
+  {
+    "id": 2,
+    "title": "Deploy with Helmfile",
+    "completed": false
+  }
+]
 ```
 
 ## 🎯 Patrones de Organización
 
-### Por tipo de recurso (Mikroways)
-
+### Por tipo de recurso (Mikroways) ✅ USAMOS ESTE
 ```
 helmfile.d/
 ├── 01-infrastructure.yaml    # DB, cache
@@ -598,18 +369,24 @@ helmfile.d/
 ├── 03-ingress.yaml           # Networking
 ```
 
-### Por dominio de negocio
+**Ventajas:**
+- Deploy por capa (infra → apps → networking)
+- Dependencias claras entre capas
+- Usado en producción real (Mikroways)
 
+### Por dominio de negocio (alternativa)
 ```
 helmfile.d/
 ├── 01-shared.yaml            # Infra compartida
-├── 02-auth-domain.yaml       # Auth + related
-├── 03-user-domain.yaml       # Users + related
-├── 04-gateway.yaml           # API Gateway
+├── 02-user-domain.yaml       # User + related
+├── 03-task-domain.yaml       # Tasks + related
 ```
 
-### Por criticidad
+**Ventajas:**
+- Equipos separados por dominio
+- Deploy por feature/dominio
 
+### Por criticidad (alternativa)
 ```
 helmfile.d/
 ├── 01-critical.yaml          # Core services
@@ -617,8 +394,11 @@ helmfile.d/
 ├── 03-optional.yaml          # Nice to have
 ```
 
-## 📝 Convenciones de Numeración
+**Ventajas:**
+- Deploy priorizando lo crítico
+- Rollback selectivo
 
+## 📝 Convenciones de Numeración
 ```
 01-  Base layer (databases, cache)
 02-  Application layer (business logic)
@@ -627,66 +407,108 @@ helmfile.d/
 05-  Security (policies, scanners)
 ```
 
+> 💡 **Tip**: La numeración ayuda a ver el orden de dependencia de un vistazo.
+
 ## 🔄 Ventajas vs Desventajas
 
 ### ✅ Ventajas
 
-- Separación clara de responsabilidades
-- Deploy selectivo por capa
-- Menos conflictos de Git
-- Fácil onboarding (ver solo lo relevante)
-- Escalable (20+ releases)
+- **Separación clara** - Cada módulo tiene una responsabilidad
+- **Deploy selectivo** - Solo infra, solo apps, etc.
+- **Menos conflictos** - Equipos trabajan en módulos diferentes
+- **Fácil onboarding** - Nuevo dev solo ve lo relevante
+- **Escalable** - Funciona con 5 o 50 releases
 
 ### ⚠️ Desventajas
 
-- Más archivos que gestionar
-- Paths relativos (`../values/`)
-- Overhead para proyectos pequeños (<5 releases)
-- Duplicación de configuración de ambientes
+- **Más archivos** - 3 archivos en vez de 1
+- **Paths relativos** - `../charts/` puede confundir
+- **Overhead** - Para proyectos muy pequeños (<3 releases)
+- **Duplicación** - Configuración de ambientes en cada módulo
+
+> 💡 **Cuándo usar módulos:**
+> - ✅ Proyectos con 5+ releases
+> - ✅ Equipos múltiples
+> - ✅ Deploy selectivo necesario
+> - ❌ Proyecto muy simple (2-3 releases)
 
 ## 🐛 Troubleshooting
 
 ### Paths relativos incorrectos
-
 ```yaml
-# ❌ ERROR (desde helmfile.d/01-infrastructure.yaml)
-values:
-  - values/postgres/values.yaml.gotmpl
+# ❌ ERROR (desde helmfile.d/02-services.yaml)
+chart: charts/app-service  # No encuentra el chart
 
 # ✅ CORRECTO
-values:
-  - values/postgres/values.yaml.gotmpl
-# (paths son relativos al helmfile que los define)
+chart: ../charts/app-service  # Path relativo al helmfile
 ```
 
 ### Ambientes no heredados
 
-```bash
-# Cada helmfile modular debe declarar environments
-# Helmfile no hereda automáticamente del principal
+Cada módulo debe declarar sus propios `environments:`:
+```yaml
+# helmfile.d/02-services.yaml
+environments:
+  dev:
+    values:
+      - values/common.yaml       # ✅ Correcto
+      - environments/dev/values.yaml
+      - environments/dev/secrets.yaml
 ```
 
+Helmfile **no hereda automáticamente** environments del módulo anterior.
+
 ### Dependencies entre módulos
-
 ```yaml
-# ❌ No funciona cross-helmfile automático
+# ❌ No funciona (postgres en otro módulo)
 needs:
-  - postgres  # Solo funciona en mismo helmfile
+  - postgres
 
-# ✅ Usar namespace prefix
+# ✅ Correcto (incluir namespace)
 needs:
-  - {{ .Environment.Name }}/postgres
+  - dev/postgres
+```
+
+### Deploy en orden incorrecto
+```bash
+# ❌ ERROR: Deploy services antes de infra
+helmfile -f helmfile.d/02-services.yaml -e dev apply
+# Error: app-service needs postgres (no existe aún)
+
+# ✅ CORRECTO: Deploy en orden
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply  # Primero infra
+helmfile -f helmfile.d/02-services.yaml -e dev apply        # Luego services
+```
+
+## 🎓 Ejercicio Práctico
+
+**Objetivo:** Actualizar solo la infraestructura sin tocar services.
+```bash
+# 1. Cambiar recursos de postgres
+nano helmfile.d/values/common.yaml
+# Aumentar memory: 1Gi
+
+# 2. Ver diferencias solo en infra
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev diff
+
+# 3. Aplicar solo infra
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
+
+# 4. Verificar que services NO se tocó
+helmfile -f helmfile.d/02-services.yaml -e dev diff
+# Output: No changes
 ```
 
 ## ✅ Checklist
 
-- [ ] Creaste helmfile.d/ con 01, 02, 03
-- [ ] helmfile.yaml orquesta los módulos
+- [ ] Entiendes por qué usar módulos
+- [ ] Tienes 3 módulos: 01-infrastructure, 02-services, 03-ingress
 - [ ] Cada módulo declara sus environments
-- [ ] Paths relativos funcionan correctamente
-- [ ] Deploy selectivo por módulo funciona
-- [ ] Deploy completo respeta orden
-- [ ] Dependencies cross-module funcionan
+- [ ] Puedes hacer deploy selectivo por módulo
+- [ ] Puedes hacer deploy selectivo por labels
+- [ ] Entiendes paths relativos (`../charts/`)
+- [ ] Deploy en orden correcto funciona (infra → services)
+- [ ] Entiendes el patrón de Mikroways
 
 ## ➡️ Siguiente Paso
 
@@ -696,8 +518,9 @@ Aprenderás:
 - Dependencias con `needs:`
 - Orden de ejecución
 - Wait conditions
-- Dependencias condicionales
+- Dependencias entre módulos
 
 ---
 
-**💡 Tip**: Para proyectos <5 releases, un solo helmfile.yaml es suficiente. Usa helmfile.d/ cuando el proyecto crece.
+**💡 Tip**: Para proyectos pequeños (<5 releases), un solo helmfile.yaml es suficiente. 
+Usa helmfile.d/ cuando el proyecto crece o trabajas en equipo.

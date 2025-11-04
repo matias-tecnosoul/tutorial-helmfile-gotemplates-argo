@@ -18,7 +18,6 @@ Go Templates es el lenguaje de templating usado por Helm y Helmfile para generar
 ## 🔄 Flujo de carga de valores
 
 Antes de profundizar en templates, es importante entender cómo Helmfile carga y mergea valores:
-
 ```
 helmfile.d/values/common.yaml (base)
            ↓
@@ -33,7 +32,6 @@ helmfile.d/values/postgres/values.yaml.gotmpl
 ```
 
 **Ejemplo práctico:**
-
 ```yaml
 # 1. common.yaml (base)
 postgres:
@@ -51,7 +49,7 @@ postgres:
 
 # 3. environments/dev/secrets.yaml
 postgres:
-  password: "dev-password-123"
+  password: "dev-postgres-secret-123"
 
 # 4. Resultado final en .Values.postgres:
 image:
@@ -59,7 +57,7 @@ image:
 resources:
   limits:
     memory: 256Mi       # De dev/values.yaml (ganó)
-password: "dev-password-123"  # De dev/secrets.yaml
+password: "dev-postgres-secret-123"  # De dev/secrets.yaml
 ```
 
 > 💡 **Orden importa**: El último archivo gana en conflictos.
@@ -67,7 +65,6 @@ password: "dev-password-123"  # De dev/secrets.yaml
 ## 🎨 Variables
 
 ### Acceso a valores desde .Values
-
 ```yaml
 # helmfile.d/values/common.yaml
 postgres:
@@ -78,7 +75,7 @@ postgres:
 
 # helmfile.d/environments/dev/secrets.yaml
 postgres:
-  password: "dev-password-123"
+  password: "dev-postgres-secret-123"
 
 # helmfile.d/values/postgres/values.yaml.gotmpl
 image:
@@ -101,7 +98,6 @@ env:
 > - ❌ `environments/dev/secrets.yaml` - Solo valores estáticos (sin .gotmpl)
 
 ### Variables locales
-
 ```yaml
 # Definir variable
 {{ $env := .Environment.Name }}
@@ -115,7 +111,6 @@ namespace: {{ $env }}
 ```
 
 ### Contexto especial en Helmfile
-
 ```yaml
 {{ .Environment.Name }}        # dev, staging, production
 {{ .Release.Name }}            # Nombre del release
@@ -126,7 +121,6 @@ namespace: {{ $env }}
 ## 🔀 Condicionales
 
 ### If básico
-
 ```yaml
 # helmfile.d/values/postgres/values.yaml.gotmpl
 ---
@@ -148,7 +142,6 @@ resources:
 ```
 
 ### If/Else If/Else
-
 ```yaml
 {{ if eq .Environment.Name "production" }}
 replicaCount: 3
@@ -160,7 +153,6 @@ replicaCount: 1
 ```
 
 ### Operadores de comparación
-
 ```yaml
 {{ if eq .Environment.Name "dev" }}         # Igual
 {{ if ne .Environment.Name "dev" }}         # No igual
@@ -172,7 +164,6 @@ replicaCount: 1
 ```
 
 ### Habilitar/deshabilitar secciones
-
 ```yaml
 {{ if .Values.postgres.persistence.enabled }}
 storage:
@@ -187,78 +178,50 @@ backup:
 {{ end }}
 ```
 
-## 🔁 Loops (Range)
+## 🔧 Pipelines y Funciones
 
-### Range sobre lista
-
+### Pipelines básicos
 ```yaml
-# helmfile.d/values/common.yaml
-postgres:
-  databases:
-    - appdb
-    - analytics
-    - logs
+# quote: Agregar comillas
+image: {{ .Values.image.repository | quote }}
 
-# values/postgres/values.yaml.gotmpl
-env:
-{{ range .Values.postgres.databases }}
-  - name: DB_{{ . | upper }}
-    value: {{ . | quote }}
-{{ end }}
+# upper/lower: Mayúsculas/minúsculas
+env_name: {{ .Environment.Name | upper }}
+
+# default: Valor por defecto si está vacío
+tag: {{ .Values.image.tag | default "latest" }}
+
+# trim: Eliminar espacios
+name: {{ .Values.name | trim }}
 ```
 
-**Resultado:**
+### Funciones de formato
 ```yaml
-env:
-  - name: DB_APPDB
-    value: "appdb"
-  - name: DB_ANALYTICS
-    value: "analytics"
-  - name: DB_LOGS
-    value: "logs"
+# toYaml: Convertir a YAML (útil para objetos complejos)
+resources:
+  {{ .Values.resources | toYaml | nindent 2 }}
+
+# nindent: Indentar N espacios
+labels:
+  {{ .Values.labels | toYaml | nindent 2 }}
+
+# indent: Similar a nindent
+annotations:
+  {{ .Values.annotations | toYaml | indent 2 }}
 ```
 
-### Range sobre mapa (key-value)
-
+### Encadenamiento de funciones
 ```yaml
-# common.yaml
-services:
-  auth:
-    port: 8001
-  user:
-    port: 8002
-  gateway:
-    port: 8080
+# Múltiples pipes
+name: {{ .Values.serviceName | trim | lower | quote }}
 
-# values.yaml.gotmpl
-{{ range $name, $config := .Values.services }}
-- name: {{ $name }}-service
-  port: {{ $config.port }}
-{{ end }}
-```
-
-**Resultado:**
-```yaml
-- name: auth-service
-  port: 8001
-- name: user-service
-  port: 8002
-- name: gateway-service
-  port: 8080
-```
-
-### Range con índice
-
-```yaml
-{{ range $index, $value := .Values.list }}
-  item-{{ $index }}: {{ $value }}
-{{ end }}
+# Con default y quote
+tag: {{ .Values.image.tag | default "latest" | quote }}
 ```
 
 ## 🎯 With (Scope)
 
 ### With básico
-
 ```yaml
 # Sin with (repetitivo)
 database:
@@ -278,7 +241,6 @@ database:
 ```
 
 ### With con condicional
-
 ```yaml
 {{ with .Values.postgres.backup }}
 {{ if .enabled }}
@@ -289,54 +251,9 @@ backup:
 {{ end }}
 ```
 
-## 🔧 Pipelines y Funciones
-
-### Pipelines básicos
-
-```yaml
-# quote: Agregar comillas
-image: {{ .Values.image.repository | quote }}
-
-# upper/lower: Mayúsculas/minúsculas
-env_name: {{ .Environment.Name | upper }}
-
-# default: Valor por defecto si está vacío
-tag: {{ .Values.image.tag | default "latest" }}
-
-# trim: Eliminar espacios
-name: {{ .Values.name | trim }}
-```
-
-### Funciones de formato
-
-```yaml
-# toYaml: Convertir a YAML (útil para objetos complejos)
-resources:
-  {{ .Values.resources | toYaml | nindent 2 }}
-
-# nindent: Indentar N espacios
-labels:
-  {{ .Values.labels | toYaml | nindent 2 }}
-
-# indent: Similar a nindent
-annotations:
-  {{ .Values.annotations | toYaml | indent 2 }}
-```
-
-### Encadenamiento de funciones
-
-```yaml
-# Múltiples pipes
-name: {{ .Values.serviceName | trim | lower | quote }}
-
-# Con default y quote
-tag: {{ .Values.image.tag | default "latest" | quote }}
-```
-
-## 🏗️ Ejemplo Completo
+## 🏗️ Ejemplo Completo: PostgreSQL
 
 ### helmfile.d/values/common.yaml
-
 ```yaml
 ---
 # Configuración base
@@ -349,9 +266,6 @@ postgres:
     repository: postgres
     tag: "15-alpine"
   port: 5432
-  databases:
-    - appdb
-    - analytics
   persistence:
     enabled: false
     size: 1Gi
@@ -370,7 +284,6 @@ postgres:
 ```
 
 ### helmfile.d/environments/dev/values.yaml
-
 ```yaml
 ---
 # Overrides para dev
@@ -389,17 +302,15 @@ postgres:
 ```
 
 ### helmfile.d/environments/dev/secrets.yaml
-
 ```yaml
 ---
 # Secrets para dev
 
 postgres:
-  password: "dev-password-123"
+  password: "dev-postgres-secret-123"
 ```
 
 ### helmfile.d/environments/production/values.yaml
-
 ```yaml
 ---
 # Overrides para producción
@@ -425,7 +336,6 @@ postgres:
 ```
 
 ### helmfile.d/environments/production/secrets.yaml
-
 ```yaml
 ---
 # Secrets para producción
@@ -435,7 +345,6 @@ postgres:
 ```
 
 ### helmfile.d/values/postgres/values.yaml.gotmpl
-
 ```yaml
 ---
 # Template dinámico de PostgreSQL
@@ -457,22 +366,17 @@ replicaCount: 1
 
 # Variables de entorno
 env:
-  - name: POSTGRES_PORT
-    value: {{ .Values.postgres.port | quote }}
+  - name: POSTGRES_DB
+    value: "appdb"
   
-  # Crear variables para cada base de datos
-  {{ range $index, $db := .Values.postgres.databases }}
-  - name: POSTGRES_DB_{{ $index }}
-    value: {{ $db | quote }}
-  {{ end }}
+  - name: POSTGRES_USER
+    value: "appuser"
   
-  # Password desde secrets
   - name: POSTGRES_PASSWORD
     value: {{ .Values.postgres.password | quote }}
   
-  # Hostname según ambiente
-  - name: POSTGRES_HOST
-    value: postgres-{{ $env }}.{{ $env }}.svc.cluster.local
+  - name: POSTGRES_PORT
+    value: {{ .Values.postgres.port | quote }}
 
 # Recursos (mergeados de common + env)
 resources:
@@ -510,39 +414,140 @@ labels:
   {{ end }}
 ```
 
+## 🏗️ Ejemplo Completo: App Service
+
+Ahora veamos cómo usar templates para nuestra aplicación Node.js.
+
+### helmfile.d/values/common.yaml (agregar)
+```yaml
+# App Service
+appService:
+  enabled: true
+  image:
+    repository: nginx  # Placeholder - cambiar al buildear imagen
+    tag: alpine
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    enabled: false
+```
+
+### helmfile.d/environments/production/values.yaml (agregar)
+```yaml
+appService:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  ingress:
+    enabled: true
+```
+
+### helmfile.d/values/app-service/values.yaml.gotmpl
+```yaml
+---
+{{ $env := .Environment.Name }}
+
+# Réplicas
+replicaCount: {{ .Values.appService.replicaCount }}
+
+# Imagen
+image:
+  repository: {{ .Values.appService.image.repository }}
+  tag: {{ .Values.appService.image.tag }}
+  pullPolicy: {{ if eq $env "production" }}IfNotPresent{{ else }}Always{{ end }}
+
+# Service
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+# Variables de entorno
+env:
+  - name: NODE_ENV
+    value: {{ $env }}
+  
+  - name: PORT
+    value: "3000"
+  
+  # Conexión a PostgreSQL
+  - name: DB_HOST
+    value: postgres.dev.svc.cluster.local
+  
+  - name: DB_NAME
+    value: "appdb"
+  
+  - name: DB_USER
+    value: "appuser"
+  
+  - name: DB_PASSWORD
+    value: {{ .Values.postgres.password | quote }}
+
+# Recursos
+resources:
+  {{ .Values.appService.resources | toYaml | nindent 2 }}
+
+# Ingress (solo si está habilitado)
+{{ if .Values.appService.ingress.enabled }}
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: app.{{ .Values.baseDomain }}
+      paths:
+        - path: /
+          pathType: Prefix
+  {{ if eq $env "production" }}
+  tls:
+    - secretName: app-service-tls
+      hosts:
+        - app.{{ .Values.baseDomain }}
+  {{ end }}
+{{ end }}
+```
+
 ## 🧪 Probar Templates
 
 ### Ver template renderizado
-
 ```bash
-# Ver todo el template
+# Ver PostgreSQL renderizado para dev
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev template
 
-# Ver solo postgres
-helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l name=postgres template
+# Ver PostgreSQL para production
+helmfile -f helmfile.d/01-infrastructure.yaml -e production template
 
-# Ver para producción
-helmfile -f helmfile.d/01-infrastructure.yaml -e production -l name=postgres template
+# Ver app-service renderizado (cuando lo despleguemos)
+helmfile -f helmfile.d/02-services.yaml -e dev template
 ```
 
 ### Ver valores mergeados
-
 ```bash
 # Ver cómo Helmfile mergea los valores
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values
 
 # Salvar a archivo para inspección
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values > /tmp/values-dev.yaml
+cat /tmp/values-dev.yaml
 ```
 
 ### Comparar entre ambientes
-
 ```bash
 # Dev
-helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l name=postgres template > /tmp/postgres-dev.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev template > /tmp/postgres-dev.yaml
 
 # Production
-helmfile -f helmfile.d/01-infrastructure.yaml -e production -l name=postgres template > /tmp/postgres-prod.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e production template > /tmp/postgres-prod.yaml
 
 # Comparar
 diff /tmp/postgres-dev.yaml /tmp/postgres-prod.yaml
@@ -559,12 +564,14 @@ diff /tmp/postgres-dev.yaml /tmp/postgres-prod.yaml
 + storage:
 +   className: gp3
 +   requestedSize: 20Gi
+
++ backup:
++   enabled: true
 ```
 
 ## 🐛 Debugging
 
 ### Debug con --debug
-
 ```bash
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev --debug template
 ```
@@ -572,7 +579,6 @@ helmfile -f helmfile.d/01-infrastructure.yaml -e dev --debug template
 Muestra paso a paso la evaluación de templates.
 
 ### Comentarios en templates
-
 ```yaml
 {{/* Esto es un comentario, no aparece en el output */}}
 
@@ -585,7 +591,6 @@ Muestra paso a paso la evaluación de templates.
 ```
 
 ### Imprimir variables para debug
-
 ```yaml
 {{/* Debug: Imprimir valor */}}
 # DEBUG: Environment = {{ .Environment.Name }}
@@ -596,7 +601,6 @@ Muestra paso a paso la evaluación de templates.
 ## ⚠️ Errores Comunes
 
 ### Error 1: Variable no definida
-
 ```yaml
 # ❌ ERROR
 tag: {{ .Values.image.tag }}
@@ -606,7 +610,6 @@ tag: {{ .Values.image.tag | default "latest" }}
 ```
 
 ### Error 2: Scope en with
-
 ```yaml
 {{ with .Values.postgres }}
   # Aquí '.' es .Values.postgres, NO .Values
@@ -618,7 +621,6 @@ tag: {{ .Values.image.tag | default "latest" }}
 ```
 
 ### Error 3: Indentación incorrecta
-
 ```yaml
 # ❌ ERROR (mal indentado)
 resources:
@@ -630,17 +632,20 @@ resources:
 ```
 
 ### Error 4: Quotes en números
-
 ```yaml
-# ❌ ERROR (puerto como string cuando debe ser número)
+# ❌ ERROR (puerto como string cuando debe ser número en YAML)
 port: {{ .Values.port | quote }}  # "5432"
 
 # ✅ CORRECTO
 port: {{ .Values.port }}  # 5432
+
+# ✅ CORRECTO (cuando debe ser string, ej: env var)
+env:
+  - name: PORT
+    value: {{ .Values.port | quote }}  # "5432" (string)
 ```
 
 ### Error 5: Valor no existe en secrets
-
 ```yaml
 # ❌ ERROR (si password no está en secrets.yaml)
 value: {{ .Values.postgres.password }}  # Error: nil pointer
@@ -650,7 +655,6 @@ value: {{ .Values.postgres.password | default "changeme" }}
 ```
 
 ## 📚 Funciones Útiles
-
 ```yaml
 # Strings
 {{ upper "hello" }}              # HELLO
@@ -681,10 +685,6 @@ value: {{ .Values.postgres.password | default "changeme" }}
 {{ toJson .Values }}             # Objeto a JSON
 {{ toString 123 }}               # "123"
 
-# Listas
-{{ list "a" "b" "c" }}           # [a b c]
-{{ index .Values.postgres.databases 0 }}  # Primer elemento
-
 # Default
 {{ .Values.tag | default "latest" }}
 
@@ -694,15 +694,13 @@ value: {{ .Values.postgres.password | default "changeme" }}
 
 ## 🎓 Ejercicio Práctico
 
-Crea un values file que:
+Modifica el template de PostgreSQL para que:
 
 1. Use diferentes réplicas según ambiente (dev=1, staging=2, prod=3)
-2. Cree variables de entorno para cada database en la lista
-3. Solo habilite backups en producción
-4. Use recursos diferentes por ambiente
+2. Solo habilite backups en producción
+3. Use recursos diferentes por ambiente
 
 **Solución:**
-
 ```yaml
 # helmfile.d/values/postgres/values.yaml.gotmpl
 {{ $env := .Environment.Name }}
@@ -718,14 +716,7 @@ replicaCount: 2
 replicaCount: 1
 {{ end }}
 
-# 2. Variables de entorno por database
-env:
-{{ range $index, $db := .Values.postgres.databases }}
-  - name: DB_{{ $index }}_NAME
-    value: {{ $db | quote }}
-{{ end }}
-
-# 3. Backups solo en prod
+# 2. Backups solo en prod
 {{ if $isProd }}
 backup:
   enabled: true
@@ -733,7 +724,7 @@ backup:
   retention: 30
 {{ end }}
 
-# 4. Recursos por ambiente
+# 3. Recursos por ambiente (mergeados automáticamente)
 resources:
   {{ .Values.postgres.resources | toYaml | nindent 2 }}
 ```
@@ -743,12 +734,12 @@ resources:
 - [ ] Entiendes el flujo de carga (common → env → secrets)
 - [ ] Usaste `{{ .Values.* }}` para acceder a valores mergeados
 - [ ] Implementaste if/else para configuración condicional
-- [ ] Usaste range para generar múltiples items
 - [ ] Aplicaste with para reducir repetición
 - [ ] Usaste pipelines (quote, default, toYaml, nindent)
 - [ ] Probaste `helmfile ... template` en dev y production
 - [ ] Usaste `write-values` para ver el merge de valores
 - [ ] Viste diferencias con diff entre ambientes
+- [ ] Creaste templates para app-service
 
 ## ➡️ Siguiente Paso
 

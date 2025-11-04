@@ -5,121 +5,89 @@
 Gestionar el orden de despliegue usando dependencias explícitas, asegurando que los servicios se desplieguen en el orden correcto.
 
 ## 📝 El Problema
-
 ```bash
 # Sin dependencias:
-API Gateway arranca → Error: auth-service no existe
-Auth Service arranca → Error: postgres no responde
+app-service arranca → Error: postgres no responde
 PostgreSQL arranca → OK (pero tarde)
 
 # Resultado: CrashLoopBackOff 💥
 ```
 
-## 💡 La Solución: needs
+**¿Por qué pasa esto?**
 
+Kubernetes y Helm no garantizan orden de despliegue. Si desplegamos todo a la vez, app-service puede arrancar antes que PostgreSQL esté listo.
+
+## 💡 La Solución: needs
 ```yaml
 releases:
   - name: postgres
     # No necesita nada
   
-  - name: auth-service
+  - name: app-service
     needs:
-      - {{ .Environment.Name }}/postgres  # Espera a postgres
-  
-  - name: api-gateway
-    needs:
-      - {{ .Environment.Name }}/auth-service  # Espera a auth
+      - dev/postgres  # Espera a postgres
 ```
+
+Helmfile esperará a que `postgres` esté desplegado antes de instalar `app-service`.
 
 ## 🏗️ Dependencias Básicas
 
 ### helmfile.d/01-infrastructure.yaml
-
 ```yaml
 ---
 releases:
   - name: postgres
-    namespace: {{ .Environment.Name }}
+    namespace: dev
     chart: groundhog2k/postgres
     values:
       - values/postgres/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     labels:
       tier: infrastructure
       component: database
-  
-  - name: redis
-    namespace: {{ .Environment.Name }}
-    chart: groundhog2k/redis
-    values:
-      - values/redis/values.yaml.gotmpl
-    labels:
-      tier: infrastructure
-      component: cache
-    # Redis no depende de postgres
 ```
 
-### helmfile.d/02-services.yaml
+**Sin dependencias** - PostgreSQL es la base, no depende de nada.
 
+### helmfile.d/02-services.yaml
 ```yaml
 ---
 releases:
-  - name: auth-service
-    namespace: {{ .Environment.Name }}
-    chart: ../charts/auth-service
+  - name: app-service
+    namespace: dev
+    chart: ../charts/app-service
     values:
-      - values/auth-service/values.yaml.gotmpl
+      - values/app-service/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     needs:
-      - {{ .Environment.Name }}/postgres
-      - {{ .Environment.Name }}/redis
+      - dev/postgres  # ← Dependencia explícita
     labels:
       tier: services
-      component: auth
-  
-  - name: user-service
-    namespace: {{ .Environment.Name }}
-    chart: ../charts/user-service
-    values:
-      - values/user-service/values.yaml.gotmpl
-    needs:
-      - {{ .Environment.Name }}/postgres
-      - {{ .Environment.Name }}/redis
-    labels:
-      tier: services
-      component: users
-  
-  - name: api-gateway
-    namespace: {{ .Environment.Name }}
-    chart: ../charts/api-gateway
-    values:
-      - values/api-gateway/values.yaml.gotmpl
-    needs:
-      - {{ .Environment.Name }}/auth-service
-      - {{ .Environment.Name }}/user-service
-    labels:
-      tier: services
-      component: gateway
+      component: app
 ```
 
-## 📊 Grafo de Dependencias
+**Con dependencias** - app-service necesita que PostgreSQL esté listo.
 
+## 📊 Grafo de Dependencias
 ```
          postgres
             ↓
-    ┌───────┴───────┐
-    ↓               ↓
-auth-service   user-service
-    ↓               ↓
-    └───────┬───────┘
+       app-service
             ↓
-       api-gateway
-            ↓
-      ingress-nginx
+      ingress-nginx (OPCIONAL)
 ```
+
+**Flujo de deploy:**
+1. PostgreSQL se instala primero
+2. Helmfile espera a que esté ready (wait: true)
+3. app-service se instala después
+4. (Opcional) Ingress se instala al final
 
 ## 🔗 Dependencias Cross-Module
 
 ### helmfile.d/03-ingress.yaml
-
 ```yaml
 ---
 releases:
@@ -128,308 +96,270 @@ releases:
     chart: ingress-nginx/ingress-nginx
     values:
       - values/nginx-ingress/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     needs:
-      # Esperar a que todos los servicios estén listos
-      - {{ .Environment.Name }}/auth-service
-      - {{ .Environment.Name }}/user-service
-      - {{ .Environment.Name }}/api-gateway
+      # Esperar a que app-service esté listo
+      - dev/app-service
     labels:
       tier: networking
 ```
 
+**Dependencias entre módulos** - Ingress espera a que app-service (de otro módulo) esté listo.
+
 ## 🧪 Verificar Orden de Ejecución
 
 ### Deploy y observar orden
-
 ```bash
-# Deploy con verbose para ver orden
-helmfile -e dev apply --debug 2>&1 | grep "Upgrading release"
+# Terminal 1: Deploy infraestructura
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
+
+# Terminal 2: Watch pods (ejecutar antes del apply)
+watch kubectl get pods -n dev
+
+# Verás:
+# 1. postgres-0 arranca primero
+# 2. Pasa a Running/Ready
+# 3. Solo entonces continúa
 ```
 
-**Salida esperada:**
-```
-Upgrading release=postgres
-Upgrading release=redis
-Upgrading release=auth-service
-Upgrading release=user-service
-Upgrading release=api-gateway
-Upgrading release=ingress-nginx
-```
-
-### Watch en tiempo real
-
+### Deploy services con dependencia
 ```bash
-# Terminal 1: Deploy
-helmfile -e dev apply
+# Terminal 1: Deploy services
+helmfile -f helmfile.d/02-services.yaml -e dev apply
 
 # Terminal 2: Watch pods
 watch kubectl get pods -n dev
+
+# Verás:
+# 1. Helmfile verifica que postgres existe
+# 2. app-service arranca
+# 3. app-service se conecta a postgres exitosamente
 ```
 
-**Observarás:**
-1. postgres-0 y redis-xxx primero
-2. auth-service-xxx y user-service-xxx después
-3. api-gateway-xxx al final
+### Verificar logs
+```bash
+# Ver logs de app-service
+kubectl logs -n dev -l app=app-service -f
+
+# Deberías ver:
+# ✅ Database table "tasks" ready
+# ✅ Sample tasks inserted
+# 🚀 App service listening on port 3000
+```
 
 ## ⏱️ Wait y Timeout
 
 ### Configuración de wait
-
 ```yaml
 # helmfile.d/01-infrastructure.yaml
 releases:
   - name: postgres
-    namespace: {{ .Environment.Name }}
+    namespace: dev
     chart: groundhog2k/postgres
     values:
       - values/postgres/values.yaml.gotmpl
     wait: true              # Esperar a que esté ready
     timeout: 300            # 5 minutos máximo
-    waitForJobs: true       # Esperar jobs (migraciones, etc.)
 ```
 
-### Por defecto en helmfile.yaml
+**¿Qué hace `wait: true`?**
 
+Helmfile espera a que:
+- El pod esté en estado `Running`
+- Los readiness probes pasen
+- El rollout esté completo
+
+### Timeouts apropiados
 ```yaml
-# helmfile.yaml
----
-# Configuración global de wait
-helmDefaults:
+# Base de datos (puede tardar en arrancar)
+- name: postgres
   wait: true
-  timeout: 300
-  waitForJobs: true
-  atomic: true  # Rollback automático si falla
+  timeout: 300  # 5 minutos
 
-environments:
-  dev:
-    values: [...]
+# Aplicación (arranque rápido)
+- name: app-service
+  wait: true
+  timeout: 180  # 3 minutos
+
+# Ingress controller (puede tardar)
+- name: ingress-nginx
+  wait: true
+  timeout: 300  # 5 minutos
 ```
 
-## 🎯 Dependencias Condicionales
+## 🎯 Testing de Dependencias
 
-### Depender solo si está habilitado
+### Test 1: Deploy desde cero
+```bash
+# Eliminar todo
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev destroy
+helmfile -f helmfile.d/02-services.yaml -e dev destroy
 
-```yaml
-# helmfile.d/02-services.yaml
-releases:
-  - name: api-gateway
-    namespace: {{ .Environment.Name }}
-    chart: ../charts/api-gateway
-    values:
-      - values/api-gateway/values.yaml.gotmpl
-    needs:
-      - {{ .Environment.Name }}/auth-service
-      - {{ .Environment.Name }}/user-service
-      # Solo depender de Redis si está habilitado
-      {{- if .Values.redis.enabled }}
-      - {{ .Environment.Name }}/redis
-      {{- end }}
+# Verificar que no hay nada
+kubectl get all -n dev
+
+# Deploy en orden correcto
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
+helmfile -f helmfile.d/02-services.yaml -e dev apply
+
+# Verificar orden en eventos
+kubectl get events -n dev --sort-by='.lastTimestamp' | grep Created
 ```
 
-### Feature flags con dependencias
+**Salida esperada:**
+```
+# PostgreSQL primero
+2m    Normal   Created    pod/postgres-0    Created container postgres
 
-```yaml
-# environments/dev/values.yaml
-features:
-  monitoring: false
-  backup: false
-
-# helmfile.d/02-services.yaml
-releases:
-  - name: auth-service
-    needs:
-      - {{ .Environment.Name }}/postgres
-      {{- if .Values.features.monitoring }}
-      - monitoring/prometheus
-      {{- end }}
+# app-service después
+1m    Normal   Created    pod/app-service-xxx    Created container app-service
 ```
 
-## 🔄 Dependencias Circulares (Evitar)
+### Test 2: Intentar deploy sin dependencias
+```bash
+# Eliminar todo
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev destroy
+helmfile -f helmfile.d/02-services.yaml -e dev destroy
 
-### ❌ Problema
+# Intentar deploy de services sin infra
+helmfile -f helmfile.d/02-services.yaml -e dev apply
 
-```yaml
-# Service A depende de B
-- name: service-a
-  needs:
-    - {{ .Environment.Name }}/service-b
-
-# Service B depende de A
-- name: service-b
-  needs:
-    - {{ .Environment.Name }}/service-a
-
-# ERROR: Circular dependency
+# Resultado:
+# Error: release "postgres" in namespace "dev" not found
+# Helmfile detiene el deploy (gracias a needs:)
 ```
 
-### ✅ Solución
+### Test 3: Conectividad de app-service
+```bash
+# Deploy completo
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
+helmfile -f helmfile.d/02-services.yaml -e dev apply
 
-```yaml
-# Refactorizar para eliminar ciclo
-- name: shared-config
-  # ConfigMap compartido
+# Port-forward
+kubectl port-forward -n dev svc/app-service 3000:80
 
-- name: service-a
-  needs:
-    - {{ .Environment.Name }}/shared-config
+# Probar endpoint de health
+curl http://localhost:3000/health
 
-- name: service-b
-  needs:
-    - {{ .Environment.Name }}/shared-config
+# Debe mostrar:
+# {
+#   "status": "healthy",
+#   "db": "connected",  ← Importante: conectado a postgres
+#   "version": "1.0.0"
+# }
+
+# Probar API de tasks (usa postgres)
+curl http://localhost:3000/api/tasks
+
+# Debe mostrar las 2 tareas de ejemplo
 ```
 
-## 🎨 Patrones Avanzados
+## 📝 Formato de needs
 
-### Dependencias en paralelo
-
+### Sintaxis correcta
 ```yaml
+# ✅ CORRECTO - Con namespace
+needs:
+  - dev/postgres
+
+# ✅ CORRECTO - Múltiples dependencias
+needs:
+  - dev/postgres
+  - dev/redis
+
+# ❌ ERROR - Sin namespace
+needs:
+  - postgres  # No funciona cross-module
+
+# ❌ ERROR - Namespace incorrecto
+needs:
+  - default/postgres  # Namespace equivocado
+```
+
+### Dependencias del mismo módulo
+```yaml
+# Si tienes múltiples releases en el mismo módulo
 releases:
   - name: postgres
-    # Base
+    namespace: dev
   
-  # Estos se despliegan en paralelo (ambos dependen solo de postgres)
-  - name: auth-service
+  - name: postgres-backup
+    namespace: dev
     needs:
-      - {{ .Environment.Name }}/postgres
-  
-  - name: user-service
-    needs:
-      - {{ .Environment.Name }}/postgres
-  
-  # Este espera a ambos
-  - name: api-gateway
-    needs:
-      - {{ .Environment.Name }}/auth-service
-      - {{ .Environment.Name }}/user-service
-```
-
-### Dependencias opcionales
-
-```yaml
-- name: api-gateway
-  needs:
-    # Siempre necesita estos
-    - {{ .Environment.Name }}/auth-service
-    - {{ .Environment.Name }}/user-service
-    
-    # Opcional según ambiente
-    {{ if eq .Environment.Name "production" }}
-    - {{ .Environment.Name }}/redis-sentinel
-    {{ else }}
-    - {{ .Environment.Name }}/redis
-    {{ end }}
-```
-
-## 📦 Dependencias Externas
-
-### Depender de releases fuera del helmfile
-
-```yaml
-releases:
-  - name: my-app
-    needs:
-      # Release instalado manualmente o por otro helmfile
-      - kube-system/cert-manager
-      - monitoring/prometheus-operator
+      - dev/postgres  # Mismo módulo, necesita namespace
 ```
 
 ## 🐛 Troubleshooting
 
 ### Dependencia no encontrada
-
 ```bash
 # Error:
-# release "postgres" not found in namespace "dev"
+# release "postgres" in namespace "dev" not found
 
-# Solución: Verificar namespace
+# Causa: needs apunta a namespace/release incorrecto
+# Solución: Verificar formato
 needs:
-  - {{ .Environment.Name }}/postgres  # ✅ Con namespace
+  - dev/postgres  # namespace/release
 ```
 
 ### Timeout esperando dependencia
-
 ```bash
 # Error:
 # timed out waiting for the condition
 
-# Solución 1: Aumentar timeout
-timeout: 600  # 10 minutos
-
-# Solución 2: Verificar que el pod arranca
+# Causa 1: Pod no arranca
 kubectl describe pod -n dev postgres-0
 
-# Solución 3: Ver logs
+# Causa 2: Readiness probe falla
 kubectl logs -n dev postgres-0
+
+# Causa 3: Timeout muy corto
+# Solución: Aumentar timeout
+timeout: 600  # 10 minutos
 ```
 
-### Dependencias en orden incorrecto
-
+### App-service falla al conectar
 ```bash
-# Ver orden planificado (sin aplicar)
-helmfile -e dev list
+# Ver logs
+kubectl logs -n dev -l app=app-service
 
-# Verificar needs de cada release
-helmfile -e dev list | grep -A 5 "name:"
+# Error común:
+# Error: connect ECONNREFUSED postgres.dev.svc.cluster.local:5432
+
+# Verificar:
+# 1. PostgreSQL está running
+kubectl get pods -n dev -l app.kubernetes.io/name=postgres
+
+# 2. Service existe
+kubectl get svc -n dev postgres
+
+# 3. DNS resuelve
+kubectl run -it --rm debug --image=busybox --restart=Never -- \
+  nslookup postgres.dev.svc.cluster.local
+
+# 4. Puerto correcto en app-service values
+# DB_HOST: postgres.dev.svc.cluster.local
+# DB_PORT: 5432
 ```
 
-## 🎯 Testing de Dependencias
-
-### Eliminar todo y re-deployar
-
+### Deploy se queda esperando
 ```bash
-# Eliminar todo
-helmfile -e dev destroy
+# Helmfile se queda en "Waiting for release..."
 
-# Deploy desde cero
-helmfile -e dev apply
+# Ver qué está pasando
+kubectl get pods -n dev -w
 
-# Verificar que el orden fue correcto
-kubectl get events -n dev --sort-by='.lastTimestamp' | grep Created
-```
+# Ver eventos
+kubectl get events -n dev --sort-by='.lastTimestamp'
 
-**Debe mostrar:**
-1. postgres primero
-2. redis después o en paralelo
-3. services después
-4. gateway al final
-
-### Deploy solo un release (ignora needs)
-
-```bash
-# Forzar deploy sin esperar dependencias
-helmfile -e dev -l name=api-gateway sync --skip-needs
-
-# ⚠️ Puede fallar si las dependencias no existen
-```
-
-## 📊 Visualizar Dependencias
-
-### Listar releases con sus needs
-
-```bash
-helmfile -e dev list --output json | jq '.[] | {name: .name, needs: .needs}'
-```
-
-**Salida:**
-```json
-{
-  "name": "postgres",
-  "needs": null
-}
-{
-  "name": "auth-service",
-  "needs": ["dev/postgres", "dev/redis"]
-}
-{
-  "name": "api-gateway",
-  "needs": ["dev/auth-service", "dev/user-service"]
-}
+# Verificar logs del pod que no arranca
+kubectl logs -n dev <pod-name>
 ```
 
 ## 🎓 Best Practices
 
 ### 1. Namespace explícito en needs
-
 ```yaml
 # ❌ Ambiguo
 needs:
@@ -437,11 +367,10 @@ needs:
 
 # ✅ Explícito
 needs:
-  - {{ .Environment.Name }}/postgres
+  - dev/postgres
 ```
 
 ### 2. Wait en bases de datos
-
 ```yaml
 - name: postgres
   wait: true
@@ -450,55 +379,139 @@ needs:
 ```
 
 ### 3. Dependencias mínimas
-
 ```yaml
 # ❌ Dependencias innecesarias
-- name: api-gateway
+- name: app-service
   needs:
-    - postgres       # No usa postgres directamente
-    - redis         # No usa redis directamente
-    - auth-service  # ✅ Sí lo usa
-    - user-service  # ✅ Sí lo usa
+    - dev/postgres        # ✅ Sí lo usa
+    - dev/some-configmap  # ❌ No lo necesita
 
 # ✅ Solo lo necesario
-- name: api-gateway
+- name: app-service
   needs:
-    - auth-service
-    - user-service
+    - dev/postgres
 ```
 
-### 4. Documentar dependencias complejas
-
+### 4. Documentar dependencias
 ```yaml
-- name: api-gateway
-  # Depende de auth y user porque:
-  # - auth: validación de tokens
-  # - user: datos de usuario
+- name: app-service
+  # Depende de postgres porque:
+  # - Necesita DB para tasks
+  # - Connection string apunta a postgres service
   needs:
-    - {{ .Environment.Name }}/auth-service
-    - {{ .Environment.Name }}/user-service
+    - dev/postgres
 ```
+
+### 5. Timeout generoso en producción
+```yaml
+# Desarrollo
+timeout: 180  # 3 min OK
+
+# Producción
+timeout: 600  # 10 min (imágenes grandes, init containers, etc.)
+```
+
+## 📚 Comparación: Con vs Sin Dependencias
+
+### Sin needs
+```yaml
+# helmfile.d/02-services.yaml
+releases:
+  - name: app-service
+    namespace: dev
+    chart: ../charts/app-service
+    # Sin needs
+```
+
+**Resultado:**
+```bash
+helmfile -f helmfile.d/02-services.yaml -e dev apply
+
+# app-service intenta arrancar inmediatamente
+# CrashLoopBackOff si postgres no está listo
+# Requiere intervención manual
+```
+
+### Con needs
+```yaml
+# helmfile.d/02-services.yaml
+releases:
+  - name: app-service
+    namespace: dev
+    chart: ../charts/app-service
+    needs:
+      - dev/postgres  # ← Magia aquí
+```
+
+**Resultado:**
+```bash
+helmfile -f helmfile.d/02-services.yaml -e dev apply
+
+# Helmfile verifica que postgres existe
+# Helmfile espera a que postgres esté ready
+# app-service arranca solo cuando postgres está listo
+# ✅ Sin CrashLoopBackOff
+```
+
+## 🎓 Ejercicio Práctico
+
+**Objetivo:** Ver qué pasa sin dependencias.
+```bash
+# 1. Eliminar needs de app-service
+nano helmfile.d/02-services.yaml
+# Comentar línea: needs: - dev/postgres
+
+# 2. Eliminar todo
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev destroy
+helmfile -f helmfile.d/02-services.yaml -e dev destroy
+
+# 3. Deploy services ANTES de infra (orden incorrecto)
+helmfile -f helmfile.d/02-services.yaml -e dev apply
+# Arranca sin esperar postgres
+
+# 4. Ver el error
+kubectl logs -n dev -l app=app-service
+# Error: connect ECONNREFUSED
+
+# 5. Deploy infra (ahora sí)
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
+
+# 6. Esperar y verificar
+# app-service se auto-recupera cuando postgres esté listo
+# (Kubernetes reinicia el pod automáticamente)
+
+# 7. Restaurar needs
+nano helmfile.d/02-services.yaml
+# Descomentar: needs: - dev/postgres
+```
+
+**Lección:** `needs:` evita estos problemas desde el inicio.
 
 ## ✅ Checklist
 
-- [ ] Agregaste `needs:` a todos los releases apropiados
-- [ ] Usaste formato `{{ .Environment.Name }}/release-name`
-- [ ] Configuraste `wait: true` en bases de datos
-- [ ] Evitaste dependencias circulares
+- [ ] Agregaste `needs:` a app-service apuntando a postgres
+- [ ] Usaste formato `dev/postgres` (con namespace)
+- [ ] Configuraste `wait: true` en PostgreSQL
+- [ ] Configuraste timeout apropiado (300s)
 - [ ] Testeaste deploy desde cero
+- [ ] Verificaste logs de app-service (conexión OK)
 - [ ] Verificaste orden con `kubectl get events`
-- [ ] Deploy completo funciona sin errores
+- [ ] Entiendes diferencia entre con/sin needs
 
 ## ➡️ Siguiente Paso
 
-👉 **[07 - Ingress](07-ingress.md)**
+👉 **[07 - Ingress (OPCIONAL)](07-ingress.md)**
 
-Aprenderás:
-- Deploy de Nginx Ingress Controller
-- Crear Ingress resources para cada service
-- Templating de hosts por ambiente
-- Testing de endpoints
+**⚠️ Este capítulo es OPCIONAL**
+
+Para el flujo principal del tutorial, puedes usar `kubectl port-forward`:
+```bash
+kubectl port-forward -n dev svc/app-service 3000:80
+curl http://localhost:3000/api/tasks
+```
+
+Si quieres aprender sobre Ingress Controller y exponer aplicaciones con hosts dinámicos, continúa con el capítulo 07.
 
 ---
 
-**💡 Tip**: Usa `wait: true` y `timeout` generosos en producción. Es mejor esperar que tener un deploy parcialmente fallido.
+**💡 Tip**: Usa `wait: true` y timeout generoso en producción. Es mejor esperar que tener un deploy parcialmente fallido.

@@ -33,6 +33,8 @@ releases:
     version: ~1.5.0
     values:
       - values/postgres/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     labels:
       tier: infrastructure
       component: database

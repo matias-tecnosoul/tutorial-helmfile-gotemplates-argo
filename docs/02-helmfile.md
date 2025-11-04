@@ -1,4 +1,4 @@
-# 02 - Introducción a Helmfile (45 min)
+# 02 - Introducción a Helmfile (30 min)
 
 ## 🎯 Objetivo
 
@@ -6,15 +6,12 @@ Entender qué es Helmfile, por qué usarlo, y desplegar tu primer release (Postg
 
 ## 📝 El Problema
 
-Imagina gestionar 10+ aplicaciones en Kubernetes:
-
+Imagina gestionar múltiples aplicaciones en Kubernetes:
 ```bash
 # Helm manual (repetitivo y propenso a errores)
 helm install postgres bitnami/postgresql -n dev -f values-dev.yaml
-helm install redis bitnami/redis -n dev -f values-dev.yaml
-helm install auth-service ./charts/auth -n dev -f values-dev.yaml
-helm install user-service ./charts/user -n dev -f values-dev.yaml
-# ... 6 más
+helm install app-service ./charts/app -n dev -f values-dev.yaml
+# ... más servicios
 
 # Ahora hazlo en staging y production
 # Ahora actualiza todos
@@ -34,7 +31,6 @@ helm install user-service ./charts/user -n dev -f values-dev.yaml
 **Helmfile = Docker Compose para Helm**
 
 Un archivo declarativo que define TODOS tus releases:
-
 ```yaml
 # helmfile.d/01-infrastructure.yaml
 releases:
@@ -43,12 +39,6 @@ releases:
     namespace: dev
     values:
       - values/postgres/values.yaml.gotmpl
-  
-  - name: redis
-    chart: groundhog2k/redis
-    namespace: dev
-    values:
-      - values/redis/values.yaml.gotmpl
 ```
 
 Un comando para gobernarlos a todos:
@@ -56,20 +46,19 @@ Un comando para gobernarlos a todos:
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 ```
 
-> 💡 **Diferencia con otros proyectos**:
+> 💡 **Patrón de este tutorial**:
 > 
-> Este tutorial sigue el patrón de Mikroways (repo `k8s-base-services`) donde NO hay 
-> `helmfile.yaml` en la raíz. Cada módulo se ejecuta independientemente:
+> Siguiendo el patrón de Mikroways, NO hay `helmfile.yaml` en la raíz. 
+> Cada módulo en `helmfile.d/` se ejecuta independientemente:
 > 
 > **Ventajas:**
 > - Deploy selectivo por módulo (solo infra, solo services, etc.)
 > - Más control granular
-> - Patrón usado en producción
+> - Patrón usado en producción real
 
 ## 🗂️ Tu Primer Helmfile
 
 ### Paso 1: Estructura básica
-
 ```bash
 cd ~/tutorial-helmfile-gotemplates-argo
 
@@ -80,7 +69,6 @@ mkdir -p helmfile.d/environments/dev
 ```
 
 ### Paso 2: Values comunes
-
 ```yaml
 # helmfile.d/values/common.yaml
 ---
@@ -92,8 +80,6 @@ postgres:
     repository: postgres
     tag: "15-alpine"
   port: 5432
-  databases:
-    - appdb
   persistence:
     enabled: false
     size: 1Gi
@@ -108,19 +94,17 @@ postgres:
 ```
 
 ### Paso 3: Secrets por ambiente
-
 ```yaml
 # helmfile.d/environments/dev/secrets.yaml
 ---
 postgres:
-  password: "dev-password-123"
+  password: "dev-postgres-secret-123"
 ```
 
 > ⚠️ **IMPORTANTE**: En producción real, estos secrets deben estar cifrados con SOPS.
 > Para este tutorial usamos plain text para simplificar.
 
 ### Paso 4: Helmfile de infraestructura
-
 ```yaml
 # helmfile.d/01-infrastructure.yaml
 ---
@@ -149,6 +133,8 @@ releases:
     version: ~1.5.0
     values:
       - values/postgres/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     labels:
       tier: infrastructure
       component: database
@@ -167,17 +153,25 @@ releases:
 > ```
 
 ### Paso 5: Values específicos de PostgreSQL (con templates)
-
 ```yaml
 # helmfile.d/values/postgres/values.yaml.gotmpl
 ---
+{{ $env := .Environment.Name }}
+{{ $isProd := eq $env "production" }}
+
 image:
   repository: {{ .Values.postgres.image.repository }}
   tag: {{ .Values.postgres.image.tag | quote }}
 
+{{ if $isProd }}
+replicaCount: 3
+{{ else }}
+replicaCount: 1
+{{ end }}
+
 env:
   - name: POSTGRES_DB
-    value: {{ index .Values.postgres.databases 0 | quote }}
+    value: "appdb"
   
   - name: POSTGRES_USER
     value: "appuser"
@@ -195,6 +189,14 @@ storage:
   requestedSize: {{ .size }}
 {{ end }}
 {{ end }}
+
+labels:
+  app: postgres
+  environment: {{ $env }}
+  tier: infrastructure
+  {{ if $isProd }}
+  critical: "true"
+  {{ end }}
 ```
 
 > 💡 **¿Por qué `.gotmpl`?**
@@ -203,34 +205,48 @@ storage:
 > 
 > - ✅ `values/postgres/values.yaml.gotmpl` - Usa `{{ .Values.* }}`
 > - ❌ `values/common.yaml` - Solo valores estáticos (sin .gotmpl)
-> - ✅ `01-infrastructure.yaml` - Puede usar templates pero NO necesita .gotmpl
+> - ❌ `environments/dev/secrets.yaml` - Solo valores estáticos (sin .gotmpl)
 > 
 > **Regla:** Solo los values files que referencian `.Values.*` necesitan `.gotmpl`
+
+### Paso 6: Values por ambiente (dev)
+```yaml
+# helmfile.d/environments/dev/values.yaml
+---
+# Overrides para desarrollo
+
+baseDomain: dev.example.local
+
+postgres:
+  persistence:
+    enabled: false  # Sin persistencia en dev
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+```
 
 ## 🧪 Desplegar con Helmfile
 
 ### Listar releases (sin instalar)
-
 ```bash
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev list
 ```
 
 **Salida:**
 ```
-NAME     NAMESPACE  ENABLED  LABELS                              CHART                 VERSION
+NAME     NAMESPACE  ENABLED  LABELS                                  CHART                 VERSION
 postgres dev        true     component:database,tier:infrastructure  groundhog2k/postgres  ~1.5.0
 ```
 
 ### Ver qué se instalará (dry-run)
-
 ```bash
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev diff
 ```
 
-**Primera vez:** Mostrará que todo es nuevo.
+**Primera vez:** Mostrará que todo es nuevo (muchas líneas de `+`).
 
 ### Instalar
-
 ```bash
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 ```
@@ -252,7 +268,6 @@ STATUS: deployed
 ```
 
 ### Verificar
-
 ```bash
 # Ver releases con Helm
 helm list -n dev
@@ -276,18 +291,22 @@ NAME                        READY   AGE
 statefulset.apps/postgres   1/1     30s
 ```
 
-### Conectarse a PostgreSQL
-
+### Conectarse a PostgreSQL para verificar
 ```bash
-# Port-forward
-kubectl port-forward -n dev svc/postgres 5432:5432 &
+# Port-forward en una terminal
+kubectl port-forward -n dev svc/postgres 5432:5432
 
-# Conectar con psql (si lo tienes instalado)
-PGPASSWORD=dev-password-123 psql -h localhost -U appuser -d appdb
+# En otra terminal, conectar con psql (si lo tienes instalado)
+PGPASSWORD=dev-postgres-secret-123 psql -h localhost -U appuser -d appdb
 
 # O desde un pod temporal
 kubectl run -it --rm psql --image=postgres:15-alpine --restart=Never -- \
   psql -h postgres.dev.svc.cluster.local -U appuser -d appdb
+
+# Dentro de psql:
+\l              # Listar bases de datos
+\dt             # Listar tablas (aún no hay)
+\q              # Salir
 ```
 
 ## 🔄 Actualizar un Release
@@ -295,17 +314,16 @@ kubectl run -it --rm psql --image=postgres:15-alpine --restart=Never -- \
 ### Cambiar configuración
 
 Edita `helmfile.d/values/common.yaml`:
-
 ```yaml
 # Cambiar límite de memoria
-resources:
-  limits:
-    cpu: 500m
-    memory: 1Gi  # ← Cambio: de 512Mi a 1Gi
+postgres:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi  # ← Cambio: de 512Mi a 1Gi
 ```
 
 ### Ver diferencias
-
 ```bash
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev diff
 ```
@@ -324,7 +342,6 @@ postgres, StatefulSet (apps) has changed:
 ```
 
 ### Aplicar cambios
-
 ```bash
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 ```
@@ -332,13 +349,12 @@ helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 Helmfile detecta el cambio y hace upgrade automáticamente.
 
 ## 🗑️ Eliminar un Release
-
 ```bash
 # Eliminar todo
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev destroy
 
 # Confirmar
-kubectl get all -n dev  # No debería haber nada
+kubectl get all -n dev  # No debería haber nada (o solo el namespace)
 ```
 
 ## 📊 Comparación: Helm vs Helmfile
@@ -354,7 +370,6 @@ kubectl get all -n dev  # No debería haber nada
 | **State** | Solo en cluster | Archivo versionable en Git |
 
 ## 🎯 Comandos Clave de Helmfile
-
 ```bash
 # Alias útil (opcional)
 alias hf-infra='helmfile -f helmfile.d/01-infrastructure.yaml'
@@ -377,6 +392,9 @@ hf-infra -e dev destroy
 # Ver templates generados (sin aplicar)
 hf-infra -e dev template
 
+# Ver valores mergeados
+hf-infra -e dev write-values
+
 # Aplicar solo un release específico
 hf-infra -e dev -l name=postgres apply
 
@@ -385,7 +403,6 @@ hf-infra -e dev -l tier=infrastructure apply
 ```
 
 ## 🔍 Estructura del helmfile modular
-
 ```yaml
 # helmfile.d/01-infrastructure.yaml
 
@@ -419,7 +436,6 @@ releases:
 ## 🔄 Flujo de carga de valores
 
 Helmfile carga valores en orden y los mergea:
-
 ```
 common.yaml → environments/dev/values.yaml → secrets.yaml
                            ↓
@@ -430,21 +446,26 @@ common.yaml → environments/dev/values.yaml → secrets.yaml
 ```
 
 **Ejemplo:**
-
 ```yaml
 # common.yaml
 postgres:
   image:
     tag: "15-alpine"
+  resources:
+    limits:
+      memory: 512Mi
   
 # environments/dev/values.yaml
 postgres:
-  image:
-    tag: "16-alpine"  # ← Override
+  resources:
+    limits:
+      memory: 256Mi  # ← Override
 
 # values/postgres/values.yaml.gotmpl
-image:
-  tag: {{ .Values.postgres.image.tag }}  # ← Resultado: "16-alpine"
+resources:
+  limits:
+    memory: {{ .Values.postgres.resources.limits.memory }}
+# ← Resultado: "256Mi" (dev ganó)
 ```
 
 > 💡 **Orden importa**: El último archivo gana en conflictos.
@@ -459,6 +480,7 @@ Antes de continuar:
 - [ ] Verificaste con `kubectl get all -n dev`
 - [ ] Probaste `helmfile ... diff` y viste cambios
 - [ ] Ejecutaste `helmfile ... list` exitosamente
+- [ ] Te conectaste a PostgreSQL para verificar que funciona
 - [ ] Entiendes el flujo de carga de valores (common → env → secrets)
 
 ## ➡️ Siguiente Paso
@@ -466,11 +488,12 @@ Antes de continuar:
 👉 **[03 - Go Templates](03-go-templates.md)**
 
 En el próximo capítulo profundizaremos en:
-- Variables y asignación
+- Variables y acceso a valores
+- Flujo de carga de valores (common → env → secrets)
 - Condicionales (if/else)
 - Loops (range)
 - Pipelines y funciones
-- Templating de values dinámicos
+- With para reducir repetición
 
 ---
 

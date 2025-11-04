@@ -14,16 +14,13 @@ replicaCount: 1
 
 env:
   - name: POSTGRES_DB
-    value: {{ index .Values.postgres.databases 0 | quote }}
+    value: "appdb"
   
   - name: POSTGRES_USER
     value: "appuser"
   
   - name: POSTGRES_PASSWORD
     value: {{ .Values.postgres.password | quote }}
-  
-  - name: POSTGRES_HOST
-    value: "postgres.dev.svc.cluster.local"  # ← Hardcoded para dev
 
 resources:
   {{ .Values.postgres.resources | toYaml | nindent 2 }}

@@ -5,7 +5,6 @@
 Gestionar múltiples ambientes (dev/staging/production) con un solo código base, usando herencia de valores y secrets.
 
 ## 📝 Patrón de Herencia
-
 ```
 common.yaml (base)
     ↓
@@ -27,43 +26,30 @@ Configuración final
 > | **Ambientes** | 1 (production) | 3 (dev/staging/prod) |
 > | **Values** | `environments/production/values.yaml` | `common.yaml` + overrides |
 > | **Herencia** | No | Sí (common → env → secrets) |
-> | **Uso** | Servicios base de infra | Microservices + multi-env |
+> | **Uso** | Servicios base de infra | App + multi-env |
 >
 > **Ambos patterns son válidos** y siguen el principio de helmfiles modulares.
 > Elegimos el pattern con herencia porque es más didáctico para aprender
 > a gestionar múltiples ambientes con configuración compartida.
 
-## ⚠️ Limitación: Namespace Dinámico
+## ⚠️ Nota sobre Namespace
 
-> **Nota técnica sobre Helmfile v1.0+:**
+> **Namespace hardcoded en este tutorial:**
 > 
-> Desde Helmfile v1.0, usar `{{ .Environment.Name }}` en archivos `.yaml`
-> (sin `.gotmpl`) genera error porque los templates se evalúan antes de
-> que el contexto del ambiente esté disponible.
->
-> **Soluciones:**
-> 1. **Hardcodear namespace** (más simple - usamos esta)
-> 2. Renombrar a `.yaml.gotmpl` (más elegante pero confuso)
-> 3. Usar archivos separados por ambiente
->
-> Para este tutorial, usamos **namespace hardcoded** en cada módulo,
-> siguiendo el patrón de k8s-base-services de Mikroways.
+> Para simplificar, usamos `namespace: dev` hardcoded en los módulos.
+> 
+> En un proyecto real multi-ambiente, tendrías:
+> - Opción 1: Módulos separados por ambiente (`01-infrastructure-dev.yaml`, `01-infrastructure-prod.yaml`)
+> - Opción 2: Usar `.yaml.gotmpl` y `{{ .Environment.Name }}`
+> 
+> Para este tutorial, nos enfocamos en aprender Helmfile con un solo ambiente.
 
-## Namespace Hardcoded
-```yaml
-releases:
-  - name: postgres
-    namespace: dev  # ← Fijo para este tutorial
-```
-
-**Si necesitas múltiples ambientes reales:**
-- Crea `01-infrastructure-{env}.yaml` por ambiente
-- O usa `.yaml.gotmpl` (comando: `helmfile -f file.yaml.gotmpl -e dev apply`)
 ## 🏗️ Estructura de Ambientes
-
 ```bash
 helmfile.d/
-├── 01-infrastructure.yaml       # Módulo (sin cambios estructurales)
+├── 01-infrastructure.yaml       # Módulo (namespace: dev)
+├── 02-services.yaml             # Módulo (namespace: dev)
+├── 03-ingress.yaml              # Módulo (OPCIONAL)
 ├── environments/
 │   ├── dev/
 │   │   ├── values.yaml
@@ -79,14 +65,15 @@ helmfile.d/
 │       └── secrets.yaml.example
 └── values/
     ├── common.yaml              # Base compartida
-    └── postgres/
+    ├── postgres/
+    │   └── values.yaml.gotmpl
+    └── app-service/
         └── values.yaml.gotmpl
 ```
 
 ## 📄 Configuración de Ambientes en Módulo
 
-### helmfile.d/01-infrastructure.yaml (actualizado)
-
+### helmfile.d/01-infrastructure.yaml
 ```yaml
 ---
 # Definir ambientes en el módulo
@@ -118,56 +105,37 @@ repositories:
 ---
 releases:
   - name: postgres
-    namespace: {{ .Environment.Name }}  # ← Namespace dinámico
+    namespace: dev  # Hardcoded para este tutorial
     createNamespace: true
     chart: groundhog2k/postgres
-    version: ~1.5.0  # ← Version actualizada
+    version: ~1.5.0
     values:
       - values/postgres/values.yaml.gotmpl
+    wait: true
+    timeout: 300
     labels:
       tier: infrastructure
       component: database
     condition: postgres.enabled
-  
-  - name: redis
-    namespace: {{ .Environment.Name }}
-    createNamespace: true
-    chart: groundhog2k/redis
-    version: ~0.7.0
-    values:
-      - values/redis/values.yaml.gotmpl
-    labels:
-      tier: infrastructure
-      component: cache
-    condition: redis.enabled
 ```
 
 ## 📦 Values por Ambiente
 
 ### helmfile.d/values/common.yaml
-
 ```yaml
 ---
 # Configuración base compartida
 
 # Global
 baseDomain: example.com
-clusterIssuer: letsencrypt-staging
-
-# Feature flags
-postgres:
-  enabled: true
-redis:
-  enabled: true
 
 # PostgreSQL base
 postgres:
+  enabled: true
   image:
     repository: postgres
     tag: "15-alpine"
   port: 5432
-  databases:
-    - appdb
   persistence:
     enabled: false
     size: 1Gi
@@ -180,22 +148,25 @@ postgres:
       cpu: 500m
       memory: 512Mi
 
-# Redis base
-redis:
+# App Service base
+appService:
+  enabled: true
   image:
-    repository: redis
-    tag: "7-alpine"
+    repository: nginx  # Placeholder
+    tag: alpine
+  replicaCount: 1
   resources:
     requests:
-      cpu: 50m
-      memory: 64Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    enabled: false
 ```
 
 ### helmfile.d/environments/dev/values.yaml
-
 ```yaml
 ---
 # Overrides para desarrollo
@@ -211,21 +182,17 @@ postgres:
       cpu: 200m
       memory: 256Mi
 
-redis:
-  resources:
-    limits:
-      cpu: 100m
-      memory: 128Mi
+appService:
+  ingress:
+    enabled: false  # Port-forward recomendado en dev
 ```
 
 ### helmfile.d/environments/staging/values.yaml
-
 ```yaml
 ---
 # Overrides para staging
 
 baseDomain: staging.example.com
-clusterIssuer: letsencrypt-staging
 
 postgres:
   persistence:
@@ -239,21 +206,22 @@ postgres:
       cpu: 1000m
       memory: 1Gi
 
-redis:
+appService:
+  replicaCount: 2
   resources:
     limits:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    enabled: true  # Ingress en staging
 ```
 
 ### helmfile.d/environments/production/values.yaml
-
 ```yaml
 ---
 # Overrides para producción
 
 baseDomain: example.com
-clusterIssuer: letsencrypt-prod
 
 postgres:
   persistence:
@@ -268,30 +236,31 @@ postgres:
       cpu: 2000m
       memory: 4Gi
 
-redis:
+appService:
+  replicaCount: 3
   resources:
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 200m
+      memory: 256Mi
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 1Gi
+  ingress:
+    enabled: true
 ```
 
 ## 🔐 Secrets (sin SOPS)
 
 ### ⚠️ ADVERTENCIA IMPORTANTE
-
 ```yaml
 # ⚠️ Los secrets en este tutorial están en plain text para simplificar
 # En producción REAL:
 # 1. NUNCA committees secrets.yaml sin cifrar
-# 2. Usa SOPS, Sealed Secrets, o Vault
+# 2. Usa SOPS, Sealed Secrets, o External Secrets
 # 3. Ver tutorial futuro sobre secrets management
 ```
 
 ### .gitignore
-
 ```bash
 # .gitignore (raíz del proyecto)
 
@@ -305,22 +274,13 @@ helmfile.d/environments/*/secrets.yaml
 .envrc
 .kube/
 .helm/
-```
 
-### Crear estructura de archivos
-
-```bash
-# Crear directorios
-mkdir -p helmfile.d/environments/{staging,production}
-mkdir -p helmfile.d/values/redis
-
-# Crear archivos vacíos
-touch helmfile.d/environments/staging/values.yaml
-touch helmfile.d/environments/production/values.yaml
+# App build artifacts
+app-service-src/node_modules/
+app-service-src/npm-debug.log
 ```
 
 ### helmfile.d/environments/dev/secrets.yaml.example
-
 ```yaml
 ---
 # Template para secrets
@@ -328,53 +288,41 @@ touch helmfile.d/environments/production/values.yaml
 
 postgres:
   password: "CHANGE-ME"
-  rootPassword: "CHANGE-ME"
-
-redis:
-  password: "CHANGE-ME"
 ```
 
 ### helmfile.d/environments/dev/secrets.yaml
-
 ```yaml
 ---
 # ⚠️ NO COMMITTEAR ESTE ARCHIVO
 
 postgres:
   password: "dev-postgres-secret-123"
-  rootPassword: "dev-root-secret-456"
-
-redis:
-  password: "dev-redis-secret-789"
 ```
 
 ### Crear secrets para todos los ambientes
-
 ```bash
 # Staging
 cp helmfile.d/environments/dev/secrets.yaml.example \
    helmfile.d/environments/staging/secrets.yaml.example
 
-cp helmfile.d/environments/dev/secrets.yaml.example \
-   helmfile.d/environments/staging/secrets.yaml
+nano helmfile.d/environments/staging/secrets.yaml
+# Contenido:
+# postgres:
+#   password: "staging-stronger-password-456"
 
 # Production
 cp helmfile.d/environments/dev/secrets.yaml.example \
    helmfile.d/environments/production/secrets.yaml.example
 
-cp helmfile.d/environments/dev/secrets.yaml.example \
-   helmfile.d/environments/production/secrets.yaml
-
-# Editar cada uno con valores diferentes
-# Dev: passwords simples
-# Staging: passwords intermedios
-# Production: passwords fuertes generados
+nano helmfile.d/environments/production/secrets.yaml
+# Contenido:
+# postgres:
+#   password: "VERY-STRONG-PROD-PASSWORD-789"
 ```
 
 ## 🎨 Templates con Secrets
 
-### helmfile.d/values/postgres/values.yaml.gotmpl (actualizado)
-
+### helmfile.d/values/postgres/values.yaml.gotmpl
 ```yaml
 ---
 {{ $env := .Environment.Name }}
@@ -392,7 +340,7 @@ replicaCount: 1
 
 env:
   - name: POSTGRES_DB
-    value: {{ index .Values.postgres.databases 0 | quote }}
+    value: "appdb"
   
   - name: POSTGRES_USER
     value: "appuser"
@@ -400,9 +348,6 @@ env:
   # Secret desde secrets.yaml
   - name: POSTGRES_PASSWORD
     value: {{ .Values.postgres.password | quote }}
-  
-  - name: POSTGRES_HOST
-    value: postgres.{{ $env }}.svc.cluster.local
 
 resources:
   {{ .Values.postgres.resources | toYaml | nindent 2 }}
@@ -424,189 +369,282 @@ labels:
   {{ end }}
 ```
 
-### helmfile.d/values/redis/values.yaml.gotmpl
-
+### helmfile.d/values/app-service/values.yaml.gotmpl
 ```yaml
 ---
 {{ $env := .Environment.Name }}
 
+replicaCount: {{ .Values.appService.replicaCount }}
+
 image:
-  repository: {{ .Values.redis.image.repository }}
-  tag: {{ .Values.redis.image.tag | quote }}
+  repository: {{ .Values.appService.image.repository }}
+  tag: {{ .Values.appService.image.tag }}
+  pullPolicy: {{ if eq $env "production" }}IfNotPresent{{ else }}Always{{ end }}
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
 
 env:
-  - name: REDIS_PASSWORD
-    value: {{ .Values.redis.password | quote }}
+  - name: NODE_ENV
+    value: {{ $env }}
   
-  - name: REDIS_HOST
-    value: redis.{{ $env }}.svc.cluster.local
+  - name: PORT
+    value: "3000"
+  
+  - name: DB_HOST
+    value: postgres.dev.svc.cluster.local
+  
+  - name: DB_NAME
+    value: "appdb"
+  
+  - name: DB_USER
+    value: "appuser"
+  
+  # Secret compartido con postgres
+  - name: DB_PASSWORD
+    value: {{ .Values.postgres.password | quote }}
 
 resources:
-  {{ .Values.redis.resources | toYaml | nindent 2 }}
+  {{ .Values.appService.resources | toYaml | nindent 2 }}
 
-labels:
-  app: redis
-  environment: {{ $env }}
-  tier: infrastructure
+{{ if .Values.appService.ingress.enabled }}
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: app.{{ .Values.baseDomain }}
+      paths:
+        - path: /
+          pathType: Prefix
+  {{ if eq $env "production" }}
+  tls:
+    - secretName: app-service-tls
+      hosts:
+        - app.{{ .Values.baseDomain }}
+  {{ end }}
+{{ end }}
 ```
 
 ## 🧪 Desplegar por Ambiente
 
 ### Desarrollo
-
 ```bash
 # Ver diferencias
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev diff
 
-# Aplicar
+# Aplicar infraestructura
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 
 # Verificar
 kubectl get all -n dev
 ```
 
-### Staging
+**Salida esperada:**
+```
+NAME             READY   STATUS    RESTARTS   AGE
+pod/postgres-0   1/1     Running   0          1m
 
-```bash
-# Aplicar staging
-helmfile -f helmfile.d/01-infrastructure.yaml -e staging apply
+NAME               TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+service/postgres   ClusterIP   10.96.100.50   <none>        5432/TCP   1m
 
-# Verificar
-kubectl get all -n staging
-
-# Comparar con dev
-kubectl get pods -n dev
-kubectl get pods -n staging
+NAME                        READY   AGE
+statefulset.apps/postgres   1/1     1m
 ```
 
-### Production
-
+### Desplegar app-service en dev
 ```bash
-# Ver qué se instalará
-helmfile -f helmfile.d/01-infrastructure.yaml -e production diff
-
-# Aplicar (con cuidado)
-helmfile -f helmfile.d/01-infrastructure.yaml -e production apply
+# Aplicar services
+helmfile -f helmfile.d/02-services.yaml -e dev apply
 
 # Verificar
-kubectl get all -n production
+kubectl get all -n dev
 ```
 
-## 📊 Comparar Configuraciones
+**Salida esperada:**
+```
+NAME                               READY   STATUS    RESTARTS   AGE
+pod/postgres-0                     1/1     Running   0          2m
+pod/app-service-xxxxxxxxxx-xxxxx   1/1     Running   0          30s
 
-### Ver templates por ambiente
+NAME                  TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/postgres      ClusterIP   10.96.100.50    <none>        5432/TCP   2m
+service/app-service   ClusterIP   10.96.200.100   <none>        80/TCP     30s
 
+NAME                          READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/app-service   1/1     1            1           30s
+```
+
+### Probar la aplicación
 ```bash
-# Dev
+# Port-forward a app-service
+kubectl port-forward -n dev svc/app-service 3000:80
+
+# En otra terminal, probar endpoints
+curl http://localhost:3000/health
+curl http://localhost:3000/api/tasks
+curl -X POST http://localhost:3000/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Test task from dev"}'
+```
+
+**Salida esperada:**
+```json
+// GET /health
+{
+  "status": "healthy",
+  "db": "connected",
+  "version": "1.0.0",
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+
+// GET /api/tasks
+[
+  {
+    "id": 1,
+    "title": "Setup Kubernetes cluster",
+    "completed": true,
+    "created_at": "2024-01-15T10:00:00.000Z"
+  },
+  {
+    "id": 2,
+    "title": "Deploy with Helmfile",
+    "completed": false,
+    "created_at": "2024-01-15T10:00:00.000Z"
+  }
+]
+```
+
+### Comparar configuraciones entre ambientes
+```bash
+# Ver templates por ambiente
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev template > /tmp/dev.yaml
-
-# Staging
 helmfile -f helmfile.d/01-infrastructure.yaml -e staging template > /tmp/staging.yaml
-
-# Production
 helmfile -f helmfile.d/01-infrastructure.yaml -e production template > /tmp/production.yaml
 
-# Comparar
+# Comparar dev vs staging
 diff /tmp/dev.yaml /tmp/staging.yaml
+
+# Comparar staging vs production
 diff /tmp/staging.yaml /tmp/production.yaml
 ```
 
-### Ver solo diferencias de recursos
+**Diferencias esperadas (dev vs production):**
+```diff
+# Réplicas
+- replicas: 1
++ replicas: 3
 
-```bash
-# Extraer solo resources de cada ambiente
-helmfile -f helmfile.d/01-infrastructure.yaml -e dev template | \
-  yq '.spec.template.spec.containers[0].resources' > /tmp/resources-dev.yaml
+# Memoria
+- memory: 256Mi
++ memory: 4Gi
 
-helmfile -f helmfile.d/01-infrastructure.yaml -e production template | \
-  yq '.spec.template.spec.containers[0].resources' > /tmp/resources-prod.yaml
+# Persistencia
+- # Sin storage
++ storage:
++   className: gp3
++   requestedSize: 20Gi
 
-diff /tmp/resources-dev.yaml /tmp/resources-prod.yaml
+# Labels
+  environment: dev
++ critical: "true"
 ```
 
-## 🎯 Feature Flags
-
-### Habilitar/deshabilitar componentes
-
-```yaml
-# environments/dev/values.yaml
-postgres:
-  enabled: true
-redis:
-  enabled: true
-
-# environments/staging/values.yaml
-postgres:
-  enabled: true
-redis:
-  enabled: true
-
-# environments/production/values.yaml
-postgres:
-  enabled: true
-redis:
-  enabled: true
-```
-
-### Aplicar solo componentes habilitados
-
+## 📊 Ver valores mergeados
 ```bash
-# PostgreSQL está habilitado en dev
-helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l component=database apply
+# Ver cómo Helmfile mergea los valores en dev
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values
 
-# Deshabilitar Redis temporalmente
-# Edit: environments/dev/values.yaml
-redis:
-  enabled: false
+# Guardar para inspección
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values > /tmp/merged-dev.yaml
 
-# Redis no se desplegará
-helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
+# Ver producción
+helmfile -f helmfile.d/01-infrastructure.yaml -e production write-values > /tmp/merged-prod.yaml
+
+# Comparar merge
+diff /tmp/merged-dev.yaml /tmp/merged-prod.yaml
 ```
 
 ## 🔄 Workflow Típico
 
 ### 1. Desarrollar en dev
-
 ```bash
-# Hacer cambios en values/common.yaml
+# Hacer cambios en common.yaml o dev/values.yaml
 nano helmfile.d/values/common.yaml
 
-# Probar en dev
+# Probar localmente
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev diff
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 
 # Verificar
 kubectl get all -n dev
+kubectl port-forward -n dev svc/app-service 3000:80
+curl http://localhost:3000/health
 ```
 
-### 2. Promover a staging
-
+### 2. Promover a staging (simulado)
 ```bash
-# Aplicar a staging
-helmfile -f helmfile.d/01-infrastructure.yaml -e staging apply
+# Ver qué cambiaría en staging
+helmfile -f helmfile.d/01-infrastructure.yaml -e staging diff
 
-# Verificar diferencias con dev
+# Aplicar a staging (si tuvieras cluster staging)
+# helmfile -f helmfile.d/01-infrastructure.yaml -e staging apply
+
+# Verificar diferencias de configuración
 diff <(helmfile -f helmfile.d/01-infrastructure.yaml -e dev template) \
      <(helmfile -f helmfile.d/01-infrastructure.yaml -e staging template)
 ```
 
-### 3. Desplegar a production
-
+### 3. Desplegar a production (simulado)
 ```bash
 # Review exhaustivo
 helmfile -f helmfile.d/01-infrastructure.yaml -e production diff
 
-# Aplicar con confirmación
-helmfile -f helmfile.d/01-infrastructure.yaml -e production apply
+# Ver template completo antes de aplicar
+helmfile -f helmfile.d/01-infrastructure.yaml -e production template | less
 
-# Monitorear
-kubectl get pods -n production -w
+# Aplicar con cuidado (si tuvieras cluster production)
+# helmfile -f helmfile.d/01-infrastructure.yaml -e production apply
+```
+
+## 🎯 Feature Flags
+
+### Habilitar/deshabilitar componentes
+```yaml
+# environments/dev/values.yaml
+postgres:
+  enabled: true
+appService:
+  enabled: true
+
+# environments/staging/values.yaml
+postgres:
+  enabled: true
+appService:
+  enabled: true
+
+# environments/production/values.yaml
+postgres:
+  enabled: true
+appService:
+  enabled: true
+```
+
+### Deshabilitar temporalmente un componente
+```bash
+# Edit: environments/dev/values.yaml
+appService:
+  enabled: false
+
+# App-service no se desplegará
+helmfile -f helmfile.d/02-services.yaml -e dev apply
+# Output: No releases to deploy (condition not met)
 ```
 
 ## 🛡️ Best Practices
 
 ### 1. Nunca usar secretos hardcodeados
-
 ```yaml
 # ❌ MAL
 env:
@@ -620,7 +658,6 @@ env:
 ```
 
 ### 2. Validar antes de aplicar
-
 ```bash
 # Siempre diff primero
 helmfile -f helmfile.d/01-infrastructure.yaml -e production diff
@@ -630,24 +667,22 @@ helmfile -f helmfile.d/01-infrastructure.yaml -e production apply
 ```
 
 ### 3. Usar naming consistente
-
 ```yaml
-# Namespaces según ambiente
-namespace: {{ .Environment.Name }}
-
-# Recursos con prefijo de ambiente
-name: postgres-{{ .Environment.Name }}
+# Labels con ambiente
+labels:
+  app: postgres
+  environment: {{ .Environment.Name }}
+  tier: infrastructure
 ```
 
 ### 4. Documentar overrides
-
 ```yaml
 # environments/production/values.yaml
 ---
 # Production overrides
 # - Más recursos (4Gi RAM)
 # - Persistencia habilitada (20Gi)
-# - Backups automáticos
+# - 3 réplicas para alta disponibilidad
 
 postgres:
   resources:
@@ -658,32 +693,27 @@ postgres:
 ## 🐛 Troubleshooting
 
 ### Secrets no se cargan
-
 ```bash
 # Verificar que secrets.yaml existe
 ls -la helmfile.d/environments/dev/secrets.yaml
 
 # Verificar que está en la lista de values
-helmfile -f helmfile.d/01-infrastructure.yaml -e dev list
+grep -A5 "environment:" helmfile.d/01-infrastructure.yaml
 
 # Ver valores cargados (⚠️ muestra secrets en consola)
-helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values | grep password
 ```
 
 ### Valores no se sobreescriben
-
 ```bash
 # Orden importa: último gana
-environments:
-  dev:
-    values:
-      - values/common.yaml        # 1. Base
-      - environments/dev/values.yaml    # 2. Override
-      - environments/dev/secrets.yaml   # 3. Secrets (gana)
+# Verificar orden en environments:
+#   - values/common.yaml        # 1. Base
+#   - environments/dev/values.yaml    # 2. Override
+#   - environments/dev/secrets.yaml   # 3. Secrets (gana)
 ```
 
 ### Diferencias inesperadas entre ambientes
-
 ```bash
 # Ver qué valores tiene cada ambiente
 helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values > /tmp/dev-values.yaml
@@ -692,15 +722,20 @@ helmfile -f helmfile.d/01-infrastructure.yaml -e production write-values > /tmp/
 diff /tmp/dev-values.yaml /tmp/prod-values.yaml
 ```
 
-### Namespace no existe
-
+### App-service no puede conectar a PostgreSQL
 ```bash
-# Error: namespace "staging" not found
+# Verificar que postgres está corriendo
+kubectl get pods -n dev -l app.kubernetes.io/name=postgres
 
-# Solución: createNamespace: true en el release
-releases:
-  - name: postgres
-    createNamespace: true  # ← Crea el namespace automáticamente
+# Verificar service
+kubectl get svc -n dev postgres
+
+# Ver logs de app-service
+kubectl logs -n dev -l app=app-service
+
+# Probar conexión desde app-service pod
+kubectl exec -it -n dev deployment/app-service -- \
+  wget -qO- postgres.dev.svc.cluster.local:5432
 ```
 
 ## ✅ Checklist
@@ -709,19 +744,20 @@ releases:
 - [ ] Configuraste herencia: common → values → secrets
 - [ ] Agregaste .gitignore para secrets.yaml
 - [ ] Creaste secrets.yaml.example para cada ambiente
-- [ ] Actualizaste 01-infrastructure.yaml con `{{ .Environment.Name }}`
-- [ ] Desplegaste en dev y staging exitosamente
+- [ ] Desplegaste infraestructura en dev exitosamente
+- [ ] Desplegaste app-service en dev exitosamente
+- [ ] Probaste endpoints con port-forward
 - [ ] Comparaste configuraciones con diff
 - [ ] Validaste que secrets se cargan correctamente
-- [ ] Entiendes la diferencia con k8s-base-services
+- [ ] App-service se conecta a PostgreSQL correctamente
 
 ## ➡️ Siguiente Paso
 
 👉 **[05 - Helmfile Modular](05-helmfile-modular.md)**
 
 Aprenderás a:
-- Dividir helmfile.yaml en módulos (helmfile.d/)
-- Organizar por categorías (infrastructure, services, ingress)
+- Dividir en módulos (helmfile.d/)
+- Organizar por categorías (infrastructure, services)
 - Pattern de Mikroways para proyectos grandes
 - Deploy selectivo por módulo
 

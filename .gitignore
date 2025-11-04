@@ -68,6 +68,9 @@ kubeconfig
 # ArgoCD
 argocd-login-token
 
+app-service-src/node_modules/
+app-service-src/npm-debug.log
+
 # Docker
 .dockerignore
 

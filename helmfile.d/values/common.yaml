@@ -3,7 +3,6 @@
 
 # Global
 baseDomain: example.com
-clusterIssuer: letsencrypt-staging
 
 # PostgreSQL
 postgres:
@@ -12,8 +11,6 @@ postgres:
     repository: postgres
     tag: "15-alpine"
   port: 5432
-  databases:
-    - appdb
   persistence:
     enabled: false
     size: 1Gi
@@ -26,63 +23,23 @@ postgres:
       cpu: 500m
       memory: 512Mi
 
-# Redis - DESHABILITADO para simplificar tutorial
-redis:
-  enabled: false
+# App Service
+appService:
+  enabled: true
   image:
-    repository: redis
-    tag: "7-alpine"
+    repository: nginx  # Placeholder - cambiar al buildear imagen
+    tag: alpine
+  replicaCount: 1
   resources:
     requests:
-      cpu: 50m
-      memory: 64Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    enabled: false
 
-# Services configuration
-services:
-  authService:
-    enabled: true
-    image:
-      repository: nginx  # Placeholder
-      tag: alpine
-    replicaCount: 1
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-  
-  userService:
-    enabled: true
-    image:
-      repository: nginx
-      tag: alpine
-    replicaCount: 1
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-  
-  apiGateway:
-    enabled: true
-    image:
-      repository: nginx
-      tag: alpine
-    replicaCount: 1
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-# Ingress
+# Ingress (opcional)
 ingressNginx:
-  enabled: true
+  enabled: false  # Deshabilitado por defecto

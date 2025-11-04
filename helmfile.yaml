@@ -1,0 +1,13 @@
+---
+# Definir ambientes
+environments:
+  dev:
+    kubeContext: kind-helmfile-tutorial
+    values:
+      - helmfile.d/values/common.yaml
+
+---
+helmfiles:
+  - path: helmfile.d/01-infrastructure.yaml
+  - path: helmfile.d/02-services.yaml
+  - path: helmfile.d/03-ingress.yaml

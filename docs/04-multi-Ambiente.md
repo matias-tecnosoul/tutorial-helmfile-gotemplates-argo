@@ -16,10 +16,54 @@ dev/secrets.yaml (sensitive)
 Configuración final
 ```
 
+## 🔍 Comparación con k8s-base-services
+
+> 💡 **Nota sobre patterns de Mikroways:**
+> 
+> Este tutorial usa un pattern ligeramente diferente a los k8s-base-services.
+>
+> | Aspecto | k8s-base-services | Este tutorial |
+> |---------|-------------------|---------------|
+> | **Ambientes** | 1 (production) | 3 (dev/staging/prod) |
+> | **Values** | `environments/production/values.yaml` | `common.yaml` + overrides |
+> | **Herencia** | No | Sí (common → env → secrets) |
+> | **Uso** | Servicios base de infra | Microservices + multi-env |
+>
+> **Ambos patterns son válidos** y siguen el principio de helmfiles modulares.
+> Elegimos el pattern con herencia porque es más didáctico para aprender
+> a gestionar múltiples ambientes con configuración compartida.
+
+## ⚠️ Limitación: Namespace Dinámico
+
+> **Nota técnica sobre Helmfile v1.0+:**
+> 
+> Desde Helmfile v1.0, usar `{{ .Environment.Name }}` en archivos `.yaml`
+> (sin `.gotmpl`) genera error porque los templates se evalúan antes de
+> que el contexto del ambiente esté disponible.
+>
+> **Soluciones:**
+> 1. **Hardcodear namespace** (más simple - usamos esta)
+> 2. Renombrar a `.yaml.gotmpl` (más elegante pero confuso)
+> 3. Usar archivos separados por ambiente
+>
+> Para este tutorial, usamos **namespace hardcoded** en cada módulo,
+> siguiendo el patrón de k8s-base-services de Mikroways.
+
+## Namespace Hardcoded
+```yaml
+releases:
+  - name: postgres
+    namespace: dev  # ← Fijo para este tutorial
+```
+
+**Si necesitas múltiples ambientes reales:**
+- Crea `01-infrastructure-{env}.yaml` por ambiente
+- O usa `.yaml.gotmpl` (comando: `helmfile -f file.yaml.gotmpl -e dev apply`)
 ## 🏗️ Estructura de Ambientes
 
 ```bash
 helmfile.d/
+├── 01-infrastructure.yaml       # Módulo (sin cambios estructurales)
 ├── environments/
 │   ├── dev/
 │   │   ├── values.yaml
@@ -34,48 +78,18 @@ helmfile.d/
 │       ├── secrets.yaml
 │       └── secrets.yaml.example
 └── values/
-    └── common.yaml
+    ├── common.yaml              # Base compartida
+    └── postgres/
+        └── values.yaml.gotmpl
 ```
 
-## 📄 Configuración de Ambientes
-
-### helmfile.yaml (actualizado)
-
-```yaml
-# helmfile.yaml
----
-environments:
-  dev:
-    kubeContext: kind-helmfile-tutorial
-    values:
-      - helmfile.d/values/common.yaml
-      - helmfile.d/environments/dev/values.yaml
-      - helmfile.d/environments/dev/secrets.yaml
-  
-  staging:
-    kubeContext: kind-helmfile-tutorial
-    values:
-      - helmfile.d/values/common.yaml
-      - helmfile.d/environments/staging/values.yaml
-      - helmfile.d/environments/staging/secrets.yaml
-  
-  production:
-    kubeContext: kind-helmfile-tutorial  # Cambiar a prod cluster
-    values:
-      - helmfile.d/values/common.yaml
-      - helmfile.d/environments/production/values.yaml
-      - helmfile.d/environments/production/secrets.yaml
-
----
-helmfiles:
-  - path: helmfile.d/01-infrastructure.yaml
-```
+## 📄 Configuración de Ambientes en Módulo
 
 ### helmfile.d/01-infrastructure.yaml (actualizado)
 
 ```yaml
-# helmfile.d/01-infrastructure.yaml
 ---
+# Definir ambientes en el módulo
 environments:
   dev:
     kubeContext: kind-helmfile-tutorial
@@ -104,10 +118,10 @@ repositories:
 ---
 releases:
   - name: postgres
-    namespace: {{ .Environment.Name }}
+    namespace: {{ .Environment.Name }}  # ← Namespace dinámico
     createNamespace: true
     chart: groundhog2k/postgres
-    version: ~0.7.0
+    version: ~1.5.0  # ← Version actualizada
     values:
       - values/postgres/values.yaml.gotmpl
     labels:
@@ -188,10 +202,10 @@ redis:
 
 baseDomain: dev.example.local
 
-# Recursos mínimos
+# Recursos mínimos para dev
 postgres:
   persistence:
-    enabled: false
+    enabled: false  # Sin persistencia en dev
   resources:
     limits:
       cpu: 200m
@@ -293,6 +307,18 @@ helmfile.d/environments/*/secrets.yaml
 .helm/
 ```
 
+### Crear estructura de archivos
+
+```bash
+# Crear directorios
+mkdir -p helmfile.d/environments/{staging,production}
+mkdir -p helmfile.d/values/redis
+
+# Crear archivos vacíos
+touch helmfile.d/environments/staging/values.yaml
+touch helmfile.d/environments/production/values.yaml
+```
+
 ### helmfile.d/environments/dev/secrets.yaml.example
 
 ```yaml
@@ -325,16 +351,18 @@ redis:
 ### Crear secrets para todos los ambientes
 
 ```bash
-# Dev
-cp helmfile.d/environments/dev/secrets.yaml.example \
-   helmfile.d/environments/dev/secrets.yaml
-
 # Staging
-cp helmfile.d/environments/staging/secrets.yaml.example \
+cp helmfile.d/environments/dev/secrets.yaml.example \
+   helmfile.d/environments/staging/secrets.yaml.example
+
+cp helmfile.d/environments/dev/secrets.yaml.example \
    helmfile.d/environments/staging/secrets.yaml
 
 # Production
-cp helmfile.d/environments/production/secrets.yaml.example \
+cp helmfile.d/environments/dev/secrets.yaml.example \
+   helmfile.d/environments/production/secrets.yaml.example
+
+cp helmfile.d/environments/dev/secrets.yaml.example \
    helmfile.d/environments/production/secrets.yaml
 
 # Editar cada uno con valores diferentes
@@ -428,10 +456,10 @@ labels:
 
 ```bash
 # Ver diferencias
-helmfile -e dev diff
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev diff
 
 # Aplicar
-helmfile -e dev apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 
 # Verificar
 kubectl get all -n dev
@@ -441,7 +469,7 @@ kubectl get all -n dev
 
 ```bash
 # Aplicar staging
-helmfile -e staging apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e staging apply
 
 # Verificar
 kubectl get all -n staging
@@ -455,10 +483,10 @@ kubectl get pods -n staging
 
 ```bash
 # Ver qué se instalará
-helmfile -e production diff
+helmfile -f helmfile.d/01-infrastructure.yaml -e production diff
 
 # Aplicar (con cuidado)
-helmfile -e production apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e production apply
 
 # Verificar
 kubectl get all -n production
@@ -470,13 +498,13 @@ kubectl get all -n production
 
 ```bash
 # Dev
-helmfile -e dev template > /tmp/dev.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev template > /tmp/dev.yaml
 
 # Staging
-helmfile -e staging template > /tmp/staging.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e staging template > /tmp/staging.yaml
 
 # Production
-helmfile -e production template > /tmp/production.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e production template > /tmp/production.yaml
 
 # Comparar
 diff /tmp/dev.yaml /tmp/staging.yaml
@@ -487,8 +515,11 @@ diff /tmp/staging.yaml /tmp/production.yaml
 
 ```bash
 # Extraer solo resources de cada ambiente
-helmfile -e dev template | yq '.resources' > /tmp/resources-dev.yaml
-helmfile -e production template | yq '.resources' > /tmp/resources-prod.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev template | \
+  yq '.spec.template.spec.containers[0].resources' > /tmp/resources-dev.yaml
+
+helmfile -f helmfile.d/01-infrastructure.yaml -e production template | \
+  yq '.spec.template.spec.containers[0].resources' > /tmp/resources-prod.yaml
 
 diff /tmp/resources-dev.yaml /tmp/resources-prod.yaml
 ```
@@ -521,7 +552,7 @@ redis:
 
 ```bash
 # PostgreSQL está habilitado en dev
-helmfile -e dev -l component=database apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev -l component=database apply
 
 # Deshabilitar Redis temporalmente
 # Edit: environments/dev/values.yaml
@@ -529,7 +560,7 @@ redis:
   enabled: false
 
 # Redis no se desplegará
-helmfile -e dev apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 ```
 
 ## 🔄 Workflow Típico
@@ -541,8 +572,8 @@ helmfile -e dev apply
 nano helmfile.d/values/common.yaml
 
 # Probar en dev
-helmfile -e dev diff
-helmfile -e dev apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev diff
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev apply
 
 # Verificar
 kubectl get all -n dev
@@ -552,20 +583,21 @@ kubectl get all -n dev
 
 ```bash
 # Aplicar a staging
-helmfile -e staging apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e staging apply
 
 # Verificar diferencias con dev
-diff <(helmfile -e dev template) <(helmfile -e staging template)
+diff <(helmfile -f helmfile.d/01-infrastructure.yaml -e dev template) \
+     <(helmfile -f helmfile.d/01-infrastructure.yaml -e staging template)
 ```
 
 ### 3. Desplegar a production
 
 ```bash
 # Review exhaustivo
-helmfile -e production diff
+helmfile -f helmfile.d/01-infrastructure.yaml -e production diff
 
 # Aplicar con confirmación
-helmfile -e production apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e production apply
 
 # Monitorear
 kubectl get pods -n production -w
@@ -591,10 +623,10 @@ env:
 
 ```bash
 # Siempre diff primero
-helmfile -e production diff
+helmfile -f helmfile.d/01-infrastructure.yaml -e production diff
 
 # Luego apply
-helmfile -e production apply
+helmfile -f helmfile.d/01-infrastructure.yaml -e production apply
 ```
 
 ### 3. Usar naming consistente
@@ -632,10 +664,10 @@ postgres:
 ls -la helmfile.d/environments/dev/secrets.yaml
 
 # Verificar que está en la lista de values
-helmfile -e dev list
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev list
 
 # Ver valores cargados (⚠️ muestra secrets en consola)
-helmfile -e dev write-values
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values
 ```
 
 ### Valores no se sobreescriben
@@ -645,19 +677,30 @@ helmfile -e dev write-values
 environments:
   dev:
     values:
-      - common.yaml        # 1. Base
-      - dev/values.yaml    # 2. Override
-      - dev/secrets.yaml   # 3. Secrets (gana)
+      - values/common.yaml        # 1. Base
+      - environments/dev/values.yaml    # 2. Override
+      - environments/dev/secrets.yaml   # 3. Secrets (gana)
 ```
 
 ### Diferencias inesperadas entre ambientes
 
 ```bash
 # Ver qué valores tiene cada ambiente
-helmfile -e dev write-values > /tmp/dev-values.yaml
-helmfile -e production write-values > /tmp/prod-values.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e dev write-values > /tmp/dev-values.yaml
+helmfile -f helmfile.d/01-infrastructure.yaml -e production write-values > /tmp/prod-values.yaml
 
 diff /tmp/dev-values.yaml /tmp/prod-values.yaml
+```
+
+### Namespace no existe
+
+```bash
+# Error: namespace "staging" not found
+
+# Solución: createNamespace: true en el release
+releases:
+  - name: postgres
+    createNamespace: true  # ← Crea el namespace automáticamente
 ```
 
 ## ✅ Checklist
@@ -666,9 +709,11 @@ diff /tmp/dev-values.yaml /tmp/prod-values.yaml
 - [ ] Configuraste herencia: common → values → secrets
 - [ ] Agregaste .gitignore para secrets.yaml
 - [ ] Creaste secrets.yaml.example para cada ambiente
+- [ ] Actualizaste 01-infrastructure.yaml con `{{ .Environment.Name }}`
 - [ ] Desplegaste en dev y staging exitosamente
 - [ ] Comparaste configuraciones con diff
 - [ ] Validaste que secrets se cargan correctamente
+- [ ] Entiendes la diferencia con k8s-base-services
 
 ## ➡️ Siguiente Paso
 
@@ -682,4 +727,4 @@ Aprenderás a:
 
 ---
 
-**💡 Tip**: Usa `helmfile -e production diff` antes de cada deploy a producción. Revisa CADA cambio antes de aplicar.
+**💡 Tip**: Usa `helmfile -f helmfile.d/01-infrastructure.yaml -e production diff` antes de cada deploy a producción. Revisa CADA cambio antes de aplicar.

@@ -1,0 +1,49 @@
+---
+{{ $env := .Environment.Name }}
+{{ $isProd := eq $env "production" }}
+
+controller:
+  # Réplicas según ambiente
+  {{ if $isProd }}
+  replicaCount: 3
+  {{ else }}
+  replicaCount: 1
+  {{ end }}
+  
+  # Service type (NodePort para Kind)
+  service:
+    type: NodePort
+    nodePorts:
+      http: 30080
+      https: 30443
+  
+  # Configuración del controller
+  config:
+    use-forwarded-headers: "true"
+    compute-full-forwarded-for: "true"
+    
+  # Recursos
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      {{ if $isProd }}
+      cpu: 1000m
+      memory: 512Mi
+      {{ else }}
+      cpu: 500m
+      memory: 256Mi
+      {{ end }}
+  
+  # Métricas (solo en prod)
+  {{ if $isProd }}
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  {{ end }}
+
+# Default backend
+defaultBackend:
+  enabled: true

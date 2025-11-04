@@ -83,6 +83,11 @@ secrets/
 *.pem
 *.crt
 *-secret.yaml
+# Secrets (NO committear)
+helmfile.d/environments/*/secrets.yaml
+
+# Keep examples
+!helmfile.d/environments/*/secrets.yaml.example
 
 # Local configuration
 config.local.yaml

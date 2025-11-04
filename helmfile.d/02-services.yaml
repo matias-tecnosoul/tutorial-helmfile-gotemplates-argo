@@ -1,0 +1,56 @@
+---
+environments:
+  dev:
+    values:
+      - values/common.yaml
+      - environments/dev/values.yaml
+      - environments/dev/secrets.yaml
+  staging:
+    values:
+      - values/common.yaml
+      - environments/staging/values.yaml
+      - environments/staging/secrets.yaml
+  production:
+    values:
+      - values/common.yaml
+      - environments/production/values.yaml
+      - environments/production/secrets.yaml
+
+---
+releases:
+  - name: auth-service
+    namespace: dev
+    chart: ../charts/auth-service
+    values:
+      - values/auth-service/values.yaml.gotmpl
+    needs:
+      - dev/postgres
+    labels:
+      tier: services
+      component: auth
+    condition: services.authService.enabled
+  
+  - name: user-service
+    namespace: dev
+    chart: ../charts/user-service
+    values:
+      - values/user-service/values.yaml.gotmpl
+    needs:
+      - dev/postgres
+    labels:
+      tier: services
+      component: users
+    condition: services.userService.enabled
+  
+  - name: api-gateway
+    namespace: dev
+    chart: ../charts/api-gateway
+    values:
+      - values/api-gateway/values.yaml.gotmpl
+    needs:
+      - dev/auth-service
+      - dev/user-service
+    labels:
+      tier: services
+      component: gateway
+    condition: services.apiGateway.enabled

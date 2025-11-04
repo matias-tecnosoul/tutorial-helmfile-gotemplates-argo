@@ -6,6 +6,18 @@ environments:
       - values/common.yaml
       - environments/dev/values.yaml
       - environments/dev/secrets.yaml
+  staging:
+    kubeContext: kind-helmfile-tutorial
+    values:
+      - values/common.yaml
+      - environments/staging/values.yaml
+      - environments/staging/secrets.yaml
+  production:
+    kubeContext: kind-helmfile-tutorial
+    values:
+      - values/common.yaml
+      - environments/production/values.yaml
+      - environments/production/secrets.yaml
 
 ---
 repositories:

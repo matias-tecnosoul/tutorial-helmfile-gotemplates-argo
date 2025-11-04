@@ -1,0 +1,26 @@
+---
+# Overrides para desarrollo
+
+baseDomain: dev.example.local
+
+# Recursos mínimos para dev
+postgres:
+  persistence:
+    enabled: false  # Sin persistencia en dev
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+# Habilitar ingress en dev
+services:
+  authService:
+    ingress:
+      enabled: true
+  
+  userService:
+    ingress:
+      enabled: true
+  
+  apiGateway:
+    ingress:
+      enabled: true

@@ -1,0 +1,39 @@
+---
+environments:
+  dev:
+    values:
+      - values/common.yaml
+      - environments/dev/values.yaml
+  staging:
+    values:
+      - values/common.yaml
+      - environments/staging/values.yaml
+  production:
+    values:
+      - values/common.yaml
+      - environments/production/values.yaml
+
+---
+repositories:
+  - name: ingress-nginx
+    url: https://kubernetes.github.io/ingress-nginx
+
+---
+releases:
+  - name: ingress-nginx
+    namespace: ingress-nginx
+    createNamespace: true
+    chart: ingress-nginx/ingress-nginx
+    version: ~4.11.0
+    values:
+      - values/nginx-ingress/values.yaml.gotmpl
+    wait: true
+    timeout: 300
+    labels:
+      tier: networking
+      component: ingress
+    condition: ingressNginx.enabled
+    needs:
+      - dev/auth-service
+      - dev/user-service
+      - dev/api-gateway

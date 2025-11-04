@@ -21,6 +21,9 @@ env:
   
   - name: POSTGRES_PASSWORD
     value: {{ .Values.postgres.password | quote }}
+  
+  - name: POSTGRES_HOST
+    value: "postgres.dev.svc.cluster.local"  # ← Hardcoded para dev
 
 resources:
   {{ .Values.postgres.resources | toYaml | nindent 2 }}
@@ -32,3 +35,11 @@ storage:
   requestedSize: {{ .size }}
 {{ end }}
 {{ end }}
+
+labels:
+  app: postgres
+  environment: {{ $env }}
+  tier: infrastructure
+  {{ if $isProd }}
+  critical: "true"
+  {{ end }}
